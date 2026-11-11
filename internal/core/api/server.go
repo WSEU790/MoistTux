@@ -27,6 +27,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/monitor"
 	"github.com/WSEU790/MoistTux/internal/core/notify"
 	"github.com/WSEU790/MoistTux/internal/core/store"
+	"github.com/WSEU790/MoistTux/internal/core/update"
 )
 
 type Server struct {
@@ -36,6 +37,8 @@ type Server struct {
 	Monitor  *monitor.Engine
 	Notifier *notify.Notifier
 	Deploy   *deploy.Manager
+	Update   *update.Updater
+	ApplyUpdate func() error
 	AI       *ai.Engine
 	Registry *ai.Registry
 	Policies *ai.PolicyStore

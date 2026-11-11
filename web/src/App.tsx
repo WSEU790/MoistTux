@@ -15,7 +15,7 @@ import { Topology } from "./pages/Topology";
 import { Activity } from "./pages/Activity";
 import { MemoryPage } from "./pages/Memory";
 import { Policies } from "./pages/Policies";
-import { Settings } from "./pages/Settings";
+import { Settings, restartToUpdate, useUpdateStatus } from "./pages/Settings";
 
 type NavItem = { id: string; label: string; icon: string; badge?: () => { n: number; cls?: string } | null };
 
@@ -167,6 +167,7 @@ export function App() {
         <div className="top-title">{title}</div>
         <div className="spacer" />
         <FleetPulse />
+        <UpdateChip />
         <AIPill />
         <button className="btn ghost sm" onClick={() => setPalette(true)} title="Command palette">
           <Icon name="search" size={14} /> <span className="faint">Jump to…</span> <kbd>Ctrl K</kbd>
@@ -208,6 +209,17 @@ function FleetPulse() {
         </span>
       )}
     </a>
+  );
+}
+
+function UpdateChip() {
+  const { toast } = useApp();
+  const [s] = useUpdateStatus();
+  if (!s || s.state !== "ready") return null;
+  return (
+    <button className="chip accent" style={{ border: 0, cursor: "pointer" }} title={`NEXUS ${s.latest} is downloaded and verified`} onClick={() => (s.can_install ? restartToUpdate(toast) : navigate("/settings/updates"))}>
+      <Icon name="download" size={12} /> Update {s.latest} ready · Restart
+    </button>
   );
 }
 

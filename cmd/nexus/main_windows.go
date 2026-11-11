@@ -8,11 +8,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"os/exec"
 	"syscall"
-	"unsafe"
 
 	"github.com/jchv/go-webview2"
 	"golang.org/x/sys/windows"
@@ -36,19 +36,35 @@ func main() {
 		messageBox("NEXUS", err.Error(), windows.MB_ICONINFORMATION)
 		os.Exit(1)
 	}
-	defer unlock()
+
+	var w webview2.WebView
+	quitCh := make(chan struct{})
+	quit := func() {
+		if w != nil {
+			w.Dispatch(func() { w.Terminate() })
+			return
+		}
+		close(quitCh)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	a, err := app.Start(ctx, app.Options{DataDir: *dataDir, Listen: "127.0.0.1:0"})
+	a, err := app.Start(ctx, app.Options{DataDir: *dataDir, Listen: "127.0.0.1:0", Quit: quit, InstallOnStart: true})
+	if errors.Is(err, app.ErrUpdating) {
+		// The installer was launched; release the lock so it can replace us.
+		unlock()
+		os.Exit(0)
+	}
 	if err != nil {
+		unlock()
 		messageBox("NEXUS failed to start", err.Error(), windows.MB_ICONERROR)
 		os.Exit(1)
 	}
+	defer unlock()
 	defer a.Close()
 
 	if !*headless {
-		w := webview2.NewWithOptions(webview2.WebViewOptions{
+		w = webview2.NewWithOptions(webview2.WebViewOptions{
 			Debug:     false,
 			AutoFocus: true,
 			DataPath:  *dataDir + `\webview`,
@@ -56,6 +72,7 @@ func main() {
 				Title:  "NEXUS — Infrastructure Command Center",
 				Width:  1480,
 				Height: 920,
+				IconId: 1, // the application icon embedded by go-winres
 				Center: true,
 			},
 		})
@@ -69,18 +86,11 @@ func main() {
 		messageBox("NEXUS", "The Microsoft Edge WebView2 Runtime was not found, so NEXUS will open in your default browser instead.\n\nInstall WebView2 from https://developer.microsoft.com/microsoft-edge/webview2/ for the desktop window.", windows.MB_ICONWARNING)
 	}
 	openBrowser(a.URL)
-	waitForever()
+	<-quitCh
 }
 
 func openBrowser(u string) {
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	_ = cmd.Start()
-}
-
-// waitForever keeps the core alive until the user ends the process (or logs off).
-func waitForever() {
-	ev, _ := windows.CreateEvent(nil, 1, 0, nil)
-	_, _ = windows.WaitForSingleObject(ev, windows.INFINITE)
-	_ = unsafe.Pointer(nil)
 }

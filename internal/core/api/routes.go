@@ -20,6 +20,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/monitor"
 	"github.com/WSEU790/MoistTux/internal/core/notify"
 	"github.com/WSEU790/MoistTux/internal/core/store"
+	"github.com/WSEU790/MoistTux/internal/core/update"
 	"github.com/WSEU790/MoistTux/internal/protocol"
 )
 
@@ -88,6 +89,22 @@ func (s *Server) routes(m *http.ServeMux) {
 
 	m.HandleFunc("GET /api/topology", s.topology)
 
+	m.HandleFunc("GET /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.Update.Status()) })
+	m.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		if st := s.Update.Status(); !st.Enabled {
+			writeErr(w, 400, errors.New(st.Disabled))
+			return
+		}
+		go func() { _ = s.Update.CheckAndDownload(context.Background()) }()
+		writeJSON(w, 202, s.Update.Status())
+	})
+	m.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.ApplyUpdate(); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 202, map[string]bool{"restarting": true})
+	})
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
 	m.HandleFunc("GET /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
 		c, err := s.Deploy.Saved(r.Context(), r.PathValue("id"))
@@ -741,6 +758,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		var a map[string]any
 		_, _ = s.Store.GetSetting(r.Context(), "appearance", &a)
 		writeJSON(w, 200, a)
+	case "updates":
+		writeJSON(w, 200, s.Update.Status().Settings)
 	case "notifications":
 		c := s.Notifier.Config()
 		var f notifyForm
@@ -810,6 +829,19 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, a)
+	case "updates":
+		var us update.Settings
+		if err := decode(r, &us); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := s.Store.PutSetting(ctx, "update.settings", us); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		s.Update.SetSettings(us)
+		_ = s.Store.Audit(ctx, "operator", "settings.updates", "updates", us)
+		writeJSON(w, 200, us)
 	case "notifications":
 		var f notifyForm
 		if err := decode(r, &f); err != nil {

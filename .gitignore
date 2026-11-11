@@ -6,3 +6,4 @@
 *.out
 /web/tsconfig.tsbuildinfo
 /internal/core/agentbin/bin/linux-*/
+/cmd/nexus/rsrc_windows_amd64.syso

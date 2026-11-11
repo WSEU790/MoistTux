@@ -13,6 +13,7 @@ const SECTIONS = [
   { id: "monitoring", label: "Monitoring & alerts", icon: "activity" },
   { id: "notifications", label: "Notifications", icon: "bell" },
   { id: "security", label: "Security & identity", icon: "lock" },
+  { id: "updates", label: "Updates", icon: "download" },
   { id: "about", label: "About & data", icon: "info" },
 ];
 
@@ -33,6 +34,7 @@ export function Settings({ section = "appearance" }: { section?: string }) {
           {section === "monitoring" && <Monitoring />}
           {section === "notifications" && <Notifications />}
           {section === "security" && <Security />}
+          {section === "updates" && <Updates />}
           {section === "about" && <About />}
         </div>
       </div>
@@ -439,5 +441,98 @@ function About() {
         ]}
       />
     </Panel>
+  );
+}
+
+// ---------------------------------------------------------------- updates
+
+export type UpdateStatus = {
+  enabled: boolean;
+  disabled_reason?: string;
+  current: string;
+  latest?: string;
+  state: string;
+  notes?: string;
+  released?: string;
+  progress?: number;
+  error?: string;
+  last_check?: string;
+  can_install: boolean;
+  release_url?: string;
+  settings: { auto_check: boolean; auto_install: boolean };
+};
+
+export function useUpdateStatus() {
+  const { on } = useApp();
+  const [s, setS] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    api.get<UpdateStatus>("/api/update").then(setS).catch(() => {});
+    return on((e) => e.type === "update" && setS(e.data));
+  }, [on]);
+  return [s, setS] as const;
+}
+
+export async function restartToUpdate(toast: (t: any) => void) {
+  try {
+    await api.post("/api/update/apply");
+    toast({ title: "Installing update", body: "NEXUS will close and reopen in a few seconds.", kind: "ok" });
+  } catch (e: any) {
+    toast({ title: "Could not install the update", body: e.message, kind: "crit" });
+  }
+}
+
+function Updates() {
+  const { toast } = useApp();
+  const [s, setS] = useUpdateStatus();
+  if (!s) return <Panel><SkeletonRows n={4} /></Panel>;
+  const label: Record<string, string> = {
+    idle: "Not checked yet", no_release: "No release published yet", checking: "Checking GitHub for a new release…", up_to_date: "NEXUS is up to date", available: "A new version is available",
+    downloading: "Downloading the update…", ready: "Update downloaded and verified", error: "Update check failed",
+  };
+  const saveSettings = (p: Partial<UpdateStatus["settings"]>) =>
+    api.put<UpdateStatus["settings"]>("/api/settings/updates", { ...s.settings, ...p }).then((settings) => setS({ ...s, settings })).catch((e) => toast({ title: "Could not save", body: e.message, kind: "crit" }));
+  return (
+    <>
+      <Panel title="NEXUS version">
+        <div className="row" style={{ gap: 18, alignItems: "flex-start" }}>
+          <div>
+            <div className="label">Installed</div>
+            <div className="mono" style={{ fontSize: 22, marginTop: 4 }}>{s.current}</div>
+          </div>
+          <div>
+            <div className="label">Latest release</div>
+            <div className="mono" style={{ fontSize: 22, marginTop: 4 }}>{s.latest ?? "—"}</div>
+            {s.released && <div className="faint" style={{ fontSize: 12 }}>published {time(s.released)}</div>}
+          </div>
+          <div className="grow" />
+          <div className="col" style={{ alignItems: "flex-end", gap: 8 }}>
+            <span className={"chip " + (s.state === "ready" ? "accent" : s.state === "up_to_date" ? "ok" : s.state === "error" ? "crit" : "")}>{label[s.state] ?? s.state}</span>
+            <div className="row">
+              <button className="btn" disabled={!s.enabled || s.state === "checking" || s.state === "downloading"} onClick={() => api.post<UpdateStatus>("/api/update/check").then(setS).catch((e) => toast({ title: "Check failed", body: e.message, kind: "crit" }))}>
+                <Icon name="refresh" className={s.state === "checking" ? "spin" : ""} /> Check now
+              </button>
+              {s.state === "ready" && s.can_install && <button className="btn primary" onClick={() => restartToUpdate(toast)}><Icon name="download" /> Restart &amp; update</button>}
+              {s.state === "available" && !s.can_install && s.release_url && <a className="btn primary" href={s.release_url} target="_blank" rel="noreferrer">Open release</a>}
+            </div>
+          </div>
+        </div>
+        {s.state === "downloading" && <div style={{ marginTop: 12 }}><Bar value={(s.progress ?? 0) * 100} thick /></div>}
+        {!s.enabled && <div style={{ marginTop: 12 }}><Notice>{s.disabled_reason}</Notice></div>}
+        {s.error && <div style={{ marginTop: 12 }}><Notice kind="crit">{s.error}</Notice></div>}
+        {s.last_check && <div className="faint" style={{ fontSize: 12, marginTop: 10 }}>Last checked {time(s.last_check)}</div>}
+      </Panel>
+      {s.notes && s.latest && (
+        <Panel title={`What's new in ${s.latest}`}>
+          <pre className="code" style={{ maxHeight: 320, whiteSpace: "pre-wrap" }}>{s.notes}</pre>
+        </Panel>
+      )}
+      <Panel title="Update behaviour">
+        <div className="col" style={{ gap: 12 }}>
+          <Switch on={s.settings.auto_check} onChange={(v) => saveSettings({ auto_check: v })} label="Check for updates automatically (at start-up and every 6 hours)" />
+          <Switch on={s.settings.auto_install} onChange={(v) => saveSettings({ auto_install: v })} label="Install downloaded updates automatically the next time NEXUS starts" />
+          <Notice icon="lock">Updates come from this project's GitHub releases. NEXUS installs one only if its manifest is signed with the project's release key (built into this app) and the installer matches the signed SHA-256. Your servers, history and keys in %LOCALAPPDATA%\NEXUS are kept.</Notice>
+        </div>
+      </Panel>
+    </>
   );
 }

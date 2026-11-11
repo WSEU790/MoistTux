@@ -27,8 +27,13 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/notify"
 	"github.com/WSEU790/MoistTux/internal/core/secrets"
 	"github.com/WSEU790/MoistTux/internal/core/store"
+	"github.com/WSEU790/MoistTux/internal/core/update"
 	"github.com/WSEU790/MoistTux/internal/core/webui"
 )
+
+// ErrUpdating is returned by Start when a verified update installer was
+// launched instead of starting the core; the caller should exit.
+var ErrUpdating = errors.New("installing a downloaded NEXUS update")
 
 // Version is set at build time.
 var Version = "0.1.0-dev"
@@ -38,6 +43,11 @@ type Options struct {
 	Listen    string // default 127.0.0.1:0 (random free port)
 	DevOrigin string
 	LogOutput io.Writer
+	// Quit closes the desktop app (set by the Windows shell). When nil, the
+	// app cannot restart itself to apply an update.
+	Quit func()
+	// InstallOnStart lets the shell apply a downloaded update before the core starts.
+	InstallOnStart bool
 }
 
 type App struct {
@@ -47,8 +57,10 @@ type App struct {
 	Monitor  *monitor.Engine
 	Notifier *notify.Notifier
 	Deploy   *deploy.Manager
+	Update   *update.Updater
 	AI       *ai.Engine
 	API      *api.Server
+	opts     Options
 	Log      *log.Logger
 
 	URL      string // launch URL including the one-time token
@@ -113,7 +125,23 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		st.Close()
 		return nil, err
 	}
-	a := &App{Store: st, Bus: events.New(), Log: logger, ident: id}
+	a := &App{Store: st, Bus: events.New(), Log: logger, ident: id, opts: opts}
+	upSettings := update.DefaultSettings()
+	_, _ = st.GetSetting(ctx, "update.settings", &upSettings)
+	if opts.InstallOnStart && upSettings.AutoInstall {
+		if p, err := update.TakePending(opts.DataDir, Version); err == nil {
+			if err := update.Launch(p); err == nil {
+				_ = st.Audit(ctx, "nexus", "update.install", p.Version, map[string]string{"from": Version, "trigger": "start"})
+				logger.Printf("installing update %s", p.Version)
+				st.Close()
+				return nil, ErrUpdating
+			} else {
+				logger.Printf("update %s could not be launched: %v", p.Version, err)
+			}
+		}
+	}
+	a.Update = update.New(Version, opts.DataDir, logger, func(s update.Status) { a.Bus.Publish("update", s) })
+	a.Update.SetSettings(upSettings)
 	identFn := func() *identity.Identity { a.idMu.RLock(); defer a.idMu.RUnlock(); return a.ident }
 
 	if n, err := st.RecoverInterrupted(ctx); err == nil && n > 0 {
@@ -145,7 +173,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, AI: a.AI, Registry: reg, Policies: pol,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)
@@ -164,9 +192,10 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.srv = &http.Server{Handler: a.API.Handler(), ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
-	a.wg.Add(2)
+	a.wg.Add(3)
 	go func() { defer a.wg.Done(); _ = a.srv.Serve(ln) }()
 	go func() { defer a.wg.Done(); a.maintenance(cctx) }()
+	go func() { defer a.wg.Done(); a.Update.Run(cctx, 45*time.Second, 6*time.Hour) }()
 	_ = st.Audit(ctx, "nexus", "core.start", host, map[string]string{"version": Version, "fingerprint": id.Fingerprint})
 	logger.Printf("NEXUS %s ready on http://%s (data %s)", Version, a.Addr, opts.DataDir)
 	return a, nil
@@ -200,4 +229,25 @@ func (a *App) Close() error {
 	a.cancel()
 	a.wg.Wait()
 	return a.Store.Close()
+}
+
+// ApplyUpdate launches the downloaded installer and closes the app so it can
+// be replaced; the installer starts NEXUS again when it is done.
+func (a *App) ApplyUpdate() error {
+	if a.opts.Quit == nil {
+		return errors.New("this NEXUS process cannot restart itself; download the new release from GitHub")
+	}
+	p, err := update.TakePending(a.opts.DataDir, Version)
+	if err != nil {
+		return fmt.Errorf("no verified update is ready: %w", err)
+	}
+	if err := update.Launch(p); err != nil {
+		return err
+	}
+	_ = a.Store.Audit(context.Background(), "operator", "update.install", p.Version, map[string]string{"from": Version, "trigger": "restart"})
+	go func() {
+		time.Sleep(400 * time.Millisecond) // let the HTTP response reach the UI
+		a.opts.Quit()
+	}()
+	return nil
 }
