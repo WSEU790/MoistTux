@@ -7,7 +7,8 @@ import type { Server } from "../lib/types";
 
 type Scan = { host: string; port: number; fingerprint: string; key_type: string; known_hosts: string; known_hosts_file?: string };
 type Step = { id: string; label: string; status: string; detail?: string };
-type Job = { id: string; state: string; error?: string; hint?: string; server_id?: string; steps: Step[]; facts: Record<string, string>; can_retry_enroll?: boolean };
+type Job = { id: string; state: string; error?: string; hint?: string; server_id?: string; steps: Step[]; facts: Record<string, string>; can_retry_enroll?: boolean; remembered?: string };
+type Saved = { saved: boolean; credential?: { user: string; host: string; port: number; auth_kind: string; host_key: string; created_at: string; last_used_at?: string } };
 
 /**
  * Installs (or upgrades) the agent over SSH. Credentials stay in this form
@@ -30,7 +31,10 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
     environment: "production",
     group: "",
     tags: "",
+    remember: false,
   });
+  const [saved, setSaved] = useState<Saved | null>(null);
+  const [useOther, setUseOther] = useState(false);
   const [scan, setScan] = useState<Scan | null>(null);
   const [verified, setVerified] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -48,6 +52,7 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
 
   useEffect(() => {
     api.get<Record<string, string>>("/api/deploy/agents").then(setAgents).catch(() => setAgents({}));
+    if (mode === "upgrade" && server) api.get<Saved>(`/api/servers/${server.id}/ssh`).then(setSaved).catch(() => setSaved({ saved: false }));
   }, []);
   useEffect(() => {
     if (!job) return;
@@ -108,8 +113,20 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
         environment: f.environment,
         group: f.group.trim(),
         tags: f.tags.split(/[,\s]+/).filter(Boolean),
+        remember: f.remember,
       });
       setJob(j);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const startSaved = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      setJob(await api.post<Job>("/api/deploy", { mode: "upgrade", server_id: server!.id, use_saved: true }));
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -126,6 +143,23 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
 
   const credsOK = f.user.trim() && (f.auth === "password" ? f.password : f.private_key.includes("PRIVATE KEY"));
   const noAgents = agents !== null && Object.keys(agents).length === 0;
+  if (mode === "upgrade" && saved?.saved && saved.credential && !useOther) {
+    const c = saved.credential;
+    return (
+      <div className="col" style={{ gap: 14 }}>
+        <ErrorNote error={err} />
+        <div style={{ padding: 14, borderRadius: "var(--radius)", background: "var(--surface-2)", border: "1px solid var(--line)" }}>
+          <div className="row" style={{ marginBottom: 6 }}><Icon name="key" /><b className="grow">Saved SSH login</b><span className="chip ok">encrypted</span></div>
+          <div className="mono" style={{ fontSize: 13 }}>{c.user}@{c.host}:{c.port} · {c.auth_kind === "key" ? "private key" : "password"}</div>
+          <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>Pinned host key {c.host_key} · saved {new Date(c.created_at).toLocaleDateString()}{c.last_used_at ? ` · last used ${new Date(c.last_used_at).toLocaleDateString()}` : ""}</div>
+        </div>
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          <button className="btn ghost" onClick={() => setUseOther(true)}>Use a different login</button>
+          <button className="btn primary" disabled={busy || noAgents} onClick={startSaved}><Icon name="bolt" /> Upgrade using saved login</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="col" style={{ gap: 14 }}>
       {noAgents && <Notice kind="warn">This build of NEXUS does not include the Linux agent binaries, so it cannot install over SSH. Use the release build, or put <span className="mono">linux-amd64/nexus-agent</span> next to NEXUS.exe.</Notice>}
@@ -201,7 +235,14 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
           </div>
         </details>
       )}
-      <Notice icon="lock">Your SSH login is used once for this installation and is not saved. NEXUS uploads its built-in agent, verifies its checksum, installs it as a least-privilege service, and then talks to it only through its pinned certificate.</Notice>
+      <label className="check" style={{ alignItems: "flex-start" }}>
+        <input type="checkbox" checked={f.remember} onChange={(e) => set("remember", e.target.checked)} style={{ marginTop: 3 }} />
+        <span>
+          Remember this SSH login on this PC
+          <div className="faint" style={{ fontSize: 12 }}>Encrypted with your Windows account (DPAPI) and used only when you choose to upgrade or repair the agent. Day-to-day monitoring never needs SSH. You can forget it any time in the server's settings.</div>
+        </span>
+      </label>
+      <Notice icon="lock">{f.remember ? "Your SSH login will be saved encrypted after it works." : "Your SSH login is used once for this installation and is not saved."} NEXUS uploads its built-in agent, verifies its checksum, installs it as a least-privilege service, and then talks to it only through its pinned certificate.</Notice>
       <div className="row" style={{ justifyContent: "flex-end" }}>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={busy || !scan || !verified || !credsOK || noAgents || scan.known_hosts === "mismatch"} onClick={start}>
@@ -234,7 +275,8 @@ function Progress({ job, mode, onClose, onRetry, onRetryEnroll }: { job: Job; mo
           {job.hint && <div style={{ marginTop: 4 }}>{job.hint}</div>}
         </Notice>
       )}
-      {job.state === "succeeded" && <Notice icon="check">{mode === "install" ? "The server is enrolled. Telemetry starts within a few seconds." : "The agent was upgraded and answered with its pinned identity."}</Notice>}
+      {job.state === "succeeded" && <Notice icon="check">{mode === "install" ? "The server is enrolled. Telemetry starts within a few seconds." : "The agent was upgraded and answered with its pinned identity."}{job.remembered === "saved" && " The SSH login was saved encrypted for future upgrades."}</Notice>}
+      {job.remembered && job.remembered !== "saved" && <Notice kind="warn">The SSH login was {job.remembered}.</Notice>}
       <div className="row" style={{ justifyContent: "flex-end" }}>
         {job.state === "failed" && !job.can_retry_enroll && <button className="btn" onClick={onRetry}>Back</button>}
         {job.state === "failed" && job.can_retry_enroll && <button className="btn primary" onClick={onRetryEnroll}><Icon name="refresh" /> Retry enrollment</button>}

@@ -89,6 +89,22 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/topology", s.topology)
 
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
+	m.HandleFunc("GET /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Deploy.Saved(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"saved": false})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"saved": true, "credential": c})
+	})
+	m.HandleFunc("DELETE /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
+		ok, err := s.Deploy.Forget(r.Context(), r.PathValue("id"), "operator")
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"forgotten": ok})
+	})
 	m.HandleFunc("POST /api/deploy/scan", s.deployScan)
 	m.HandleFunc("POST /api/deploy", s.deployStart)
 	m.HandleFunc("GET /api/deploy/{id}", s.deployGet)

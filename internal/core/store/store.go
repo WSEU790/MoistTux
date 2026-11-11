@@ -279,6 +279,19 @@ var migrations = []string{
 		deliveries TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX notifications_ts ON notifications(ts);`,
+
+	// v2 — optional saved SSH logins (sealed with the platform protector)
+	`CREATE TABLE ssh_credentials (
+		server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		user TEXT NOT NULL,
+		auth_kind TEXT NOT NULL,
+		host_key TEXT NOT NULL,
+		sealed TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

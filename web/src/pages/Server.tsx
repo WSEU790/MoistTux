@@ -368,11 +368,12 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
         </div>
         <div className="row">
           <div className="grow">
-            <b>Upgrade agent over SSH</b>
-            <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>Installs the agent bundled with this NEXUS build; identity and enrollment are kept.</div>
+            <b>Upgrade or repair agent over SSH</b>
+            <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>Reinstalls the agent bundled with this NEXUS build; identity and enrollment are kept. Also works when the agent is offline.</div>
           </div>
           <button className="btn" onClick={() => setUpgrading(true)}><Icon name="download" /> Upgrade…</button>
         </div>
+        <SavedLogin serverId={s.id} />
         <div className="row">
           <div className="grow">
             <b className="crit-t">Remove server</b>
@@ -382,5 +383,30 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function SavedLogin({ serverId }: { serverId: string }) {
+  const { toast } = useApp();
+  const [saved, setSaved] = useState<{ saved: boolean; credential?: { user: string; host: string; auth_kind: string; created_at: string } } | null>(null);
+  const load = () => api.get<any>(`/api/servers/${serverId}/ssh`).then(setSaved).catch(() => setSaved({ saved: false }));
+  React.useEffect(() => {
+    load();
+  }, [serverId]);
+  if (!saved) return null;
+  return (
+    <div className="row">
+      <div className="grow">
+        <b>Saved SSH login</b>
+        <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>
+          {saved.saved && saved.credential ? `${saved.credential.user}@${saved.credential.host} · ${saved.credential.auth_kind === "key" ? "private key" : "password"} · encrypted with your Windows account · saved ${new Date(saved.credential.created_at).toLocaleDateString()}` : "None saved. Tick \u201cRemember this SSH login\u201d during an install or upgrade to save one."}
+        </div>
+      </div>
+      {saved.saved && (
+        <button className="btn" onClick={() => api.del(`/api/servers/${serverId}/ssh`).then(() => { toast({ title: "Saved SSH login deleted", kind: "ok" }); load(); })}>
+          <Icon name="trash" /> Forget
+        </button>
+      )}
+    </div>
   );
 }

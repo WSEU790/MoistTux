@@ -137,7 +137,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		}
 		a.AI.Investigate(ctx, inc)
 	})
-	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, logger)
+	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, prot, logger)
 	a.Fleet.SetHooks(fleet.Hooks{OnSamples: a.Monitor.OnSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
 
 	tok := make([]byte, 32)

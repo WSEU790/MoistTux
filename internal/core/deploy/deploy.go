@@ -27,7 +27,11 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"encoding/json"
+
 	"github.com/WSEU790/MoistTux/internal/core/agentbin"
+	"github.com/WSEU790/MoistTux/internal/core/agentclient"
+	"github.com/WSEU790/MoistTux/internal/core/secrets"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/store"
@@ -147,6 +151,16 @@ type Request struct {
 	Environment string   `json:"environment"`
 	Group       string   `json:"group"`
 	Tags        []string `json:"tags"`
+	Remember    bool     `json:"remember"`  // save this login (sealed) for later upgrades and repairs
+	UseSaved    bool     `json:"use_saved"` // upgrade with the login saved for ServerID
+}
+
+// secretBundle is what gets sealed when an operator chooses to remember a login.
+type secretBundle struct {
+	Password   string `json:"password,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+	SudoPass   string `json:"sudo_password,omitempty"`
 }
 
 type Step struct {
@@ -174,9 +188,12 @@ type Job struct {
 	CanRetry bool       `json:"can_retry_enroll"`
 
 	pending *fleet.EnrollRequest // installed but not yet enrolled
+	Remembered string             `json:"remembered,omitempty"` // saved | not saved: <reason>
+	toSave     *store.SSHCredential // sealed login to persist once the server is enrolled
 }
 
 type Manager struct {
+	prot  secrets.Protector
 	fleet *fleet.Manager
 	st    *store.Store
 	bus   *events.Bus
@@ -186,8 +203,79 @@ type Manager struct {
 	jobs map[string]*Job
 }
 
-func NewManager(f *fleet.Manager, st *store.Store, bus *events.Bus, logger *log.Logger) *Manager {
-	return &Manager{fleet: f, st: st, bus: bus, log: logger, jobs: map[string]*Job{}}
+func NewManager(f *fleet.Manager, st *store.Store, bus *events.Bus, prot secrets.Protector, logger *log.Logger) *Manager {
+	return &Manager{fleet: f, st: st, bus: bus, prot: prot, log: logger, jobs: map[string]*Job{}}
+}
+
+// Saved returns the metadata of a server's saved SSH login (never the secret).
+func (m *Manager) Saved(ctx context.Context, serverID string) (*store.SSHCredential, error) {
+	return m.st.GetSSHCredential(ctx, serverID)
+}
+
+// Forget deletes a saved login.
+func (m *Manager) Forget(ctx context.Context, serverID, by string) (bool, error) {
+	ok, err := m.st.DeleteSSHCredential(ctx, serverID)
+	if err == nil && ok {
+		_ = m.st.Audit(ctx, by, "ssh.credentials.forget", serverID, nil)
+	}
+	return ok, err
+}
+
+// loadSaved fills a request from the sealed login saved for req.ServerID.
+func (m *Manager) loadSaved(ctx context.Context, req *Request) error {
+	c, err := m.st.GetSSHCredential(ctx, req.ServerID)
+	if err != nil {
+		return errors.New("no SSH login is saved for this server")
+	}
+	raw, err := secrets.Open(m.prot, c.Sealed)
+	if err != nil {
+		return fmt.Errorf("the saved SSH login cannot be decrypted on this Windows account (%v); forget it and enter the login again", err)
+	}
+	var b secretBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return errors.New("the saved SSH login is corrupt; forget it and enter the login again")
+	}
+	req.Host, req.SSHPort, req.User, req.HostKey = c.Host, c.Port, c.User, c.HostKey
+	req.Password, req.PrivateKey, req.Passphrase, req.SudoPass = b.Password, b.PrivateKey, b.Passphrase, b.SudoPass
+	m.st.TouchSSHCredential(ctx, req.ServerID)
+	return nil
+}
+
+func (m *Manager) sealFor(req Request) (*store.SSHCredential, error) {
+	b, _ := json.Marshal(secretBundle{Password: req.Password, PrivateKey: req.PrivateKey, Passphrase: req.Passphrase, SudoPass: req.SudoPass})
+	sealed, err := secrets.Seal(m.prot, b)
+	if err != nil {
+		return nil, err
+	}
+	return &store.SSHCredential{Host: req.Host, Port: req.SSHPort, User: req.User, AuthKind: authKindShort(req), HostKey: req.HostKey, Sealed: sealed}, nil
+}
+
+func authKindShort(r Request) string {
+	if r.PrivateKey != "" {
+		return "key"
+	}
+	return "password"
+}
+
+// persistSaved stores the sealed login once the server ID is known.
+func (m *Manager) persistSaved(j *Job, serverID string) {
+	m.mu.Lock()
+	c := j.toSave
+	j.toSave = nil
+	m.mu.Unlock()
+	if c == nil {
+		return
+	}
+	c.ServerID = serverID
+	status := "saved"
+	if err := m.st.PutSSHCredential(context.Background(), c); err != nil {
+		status = "not saved: " + err.Error()
+	} else {
+		_ = m.st.Audit(context.Background(), "operator", "ssh.credentials.save", serverID, map[string]string{"user": c.User, "auth": c.AuthKind, "host_key": c.HostKey})
+	}
+	m.mu.Lock()
+	j.Remembered = status
+	m.mu.Unlock()
 }
 
 var stepDefs = [][2]string{
@@ -233,6 +321,15 @@ func (m *Manager) Start(req Request) (*Job, error) {
 	if req.Mode != "install" && req.Mode != "upgrade" {
 		return nil, errors.New("mode must be install or upgrade")
 	}
+	if req.UseSaved {
+		if req.Mode != "upgrade" {
+			return nil, errors.New("a saved login can only be used for an existing server")
+		}
+		if err := m.loadSaved(context.Background(), &req); err != nil {
+			return nil, err
+		}
+		req.Remember = false // already saved
+	}
 	if err := validHost(req.Host); err != nil {
 		return nil, err
 	}
@@ -275,7 +372,7 @@ func (m *Manager) Start(req Request) (*Job, error) {
 	m.mu.Lock()
 	m.jobs[j.ID] = j
 	m.mu.Unlock()
-	_ = m.st.Audit(context.Background(), "operator", "deploy."+req.Mode+".start", req.Host, map[string]any{"job": j.ID, "ssh_user": req.User, "ssh_port": req.SSHPort, "host_key": req.HostKey, "agent_port": req.AgentPort, "docker": req.Docker, "auth": authKind(req)})
+	_ = m.st.Audit(context.Background(), "operator", "deploy."+req.Mode+".start", req.Host, map[string]any{"job": j.ID, "ssh_user": req.User, "ssh_port": req.SSHPort, "host_key": req.HostKey, "agent_port": req.AgentPort, "docker": req.Docker, "auth": authKind(req), "saved_login": req.UseSaved, "remember": req.Remember})
 	go m.run(j, req)
 	return j.snapshot(), nil
 }
@@ -482,6 +579,18 @@ func (m *Manager) run(j *Job, req Request) {
 	m.fact(j, "workstation_ip", localIP)
 	m.fact(j, "ssh_server", string(client.ServerVersion()))
 	m.step(j, "connect", "done", fmt.Sprintf("Authenticated as %s; host key %s verified", req.User, want))
+	if req.Remember {
+		// Seal now (credentials are proven to work) and persist on success.
+		if c, err := m.sealFor(req); err == nil {
+			m.mu.Lock()
+			j.toSave = c
+			m.mu.Unlock()
+		} else {
+			m.mu.Lock()
+			j.Remembered = "not saved: " + err.Error()
+			m.mu.Unlock()
+		}
+	}
 	r := &remote{c: client}
 
 	// 2. inspect
@@ -617,6 +726,7 @@ func (m *Manager) run(j *Job, req Request) {
 				hc()
 				if err == nil {
 					m.fact(j, "agent_version", h.AgentVersion)
+					m.persistSaved(j, req.ServerID)
 					m.step(j, "enroll", "done", "agent "+h.AgentVersion+" answered with its pinned identity")
 					m.finish(j, nil, "")
 					return
@@ -626,7 +736,11 @@ func (m *Manager) run(j *Job, req Request) {
 			time.Sleep(1500 * time.Millisecond)
 		}
 		m.step(j, "enroll", "failed", fmt.Sprint(lastErr))
-		m.finish(j, fmt.Errorf("upgraded agent did not answer: %v", lastErr), "")
+		hint := ""
+		if errors.Is(lastErr, agentclient.ErrFingerprintMismatch) {
+			hint = "The agent on the server now has a different identity — its state was removed (for example with uninstall --purge), so it is effectively a new agent. NEXUS will not trust it automatically: remove this server from NEXUS and add it again."
+		}
+		m.finish(j, fmt.Errorf("upgraded agent did not answer with its pinned identity: %v", lastErr), hint)
 		return
 	}
 	er := &fleet.EnrollRequest{Name: req.Name, Address: req.Host, Port: req.AgentPort, Code: enrollCode, Environment: req.Environment, Group: req.Group, Tags: req.Tags}
@@ -679,6 +793,7 @@ func (m *Manager) enroll(ctx context.Context, j *Job, er *fleet.EnrollRequest, l
 	m.mu.Lock()
 	j.ServerID, j.pending, j.CanRetry = srv.ID, nil, false
 	m.mu.Unlock()
+	m.persistSaved(j, srv.ID)
 	m.step(j, "enroll", "done", fmt.Sprintf("enrolled as %s · agent fingerprint %s… matched", srv.Name, srv.AgentFingerprint[:16]))
 	m.finish(j, nil, "")
 }

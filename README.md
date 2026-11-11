@@ -31,7 +31,7 @@ maintenance.
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
 
-| **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo, checks the firewall, and enrolls it. Agents can also be upgraded over SSH. SSH credentials are used once and never stored. |
+| **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo, checks the firewall, and enrolls it. Agents can also be upgraded or repaired over SSH. The SSH login is not stored unless you tick *Remember this SSH login*; it is then encrypted with your Windows account (DPAPI) and can be forgotten at any time. Day-to-day monitoring never uses SSH. |
 
 See [`docs/STATUS.md`](docs/STATUS.md) for phase-by-phase status against the
 product directive, including what is **not** built yet (Backup Center, Compose

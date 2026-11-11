@@ -42,7 +42,7 @@ against a real Linux host during development.
 | 7 | SSH analysis, authentication events, posture, recommendations, audit log | Done. auditd, AIDE and Lynis are detected but not integrated. |
 | 8 | Scheduler, Backup Center, restore, restore testing, maintenance windows, automation policies, recovery workflows | Policies and maintenance windows (enforced for autonomous actions) are done. **Backups, restore, scheduled maintenance jobs and update scheduling are not started.** The UI says so explicitly and never shows backup data. |
 | 9 | Server groups, tags, environments, fleet monitoring, cross-server views, centralized alerts | Done |
-| 9 | Remote agent deployment over SSH | Done; verified. Fleet → Add server → Install over SSH: password or private key, sudo with or without a password, host-key confirmation (checked against `known_hosts`), embedded agent upload with SHA-256 verification, firewall check, enrollment, and retry after the port is opened. Agent upgrade over SSH from server settings. SSH credentials are never stored. |
+| 9 | Remote agent deployment over SSH | Done; verified. Fleet → Add server → Install over SSH: password or private key, sudo with or without a password, host-key confirmation (checked against `known_hosts`), embedded agent upload with SHA-256 verification, firewall check, enrollment, and retry after the port is opened. Upgrade or repair over SSH from server settings. Optional saved SSH login (opt-in, sealed with DPAPI, never returned by the API, deleted with the server or by Forget) for one-click upgrades. |
 | 10 | Installer (MSI/MSIX), code signing, auto-update, release packaging | **Not started** |
 | 10 | Security testing | Unit and integration tests for authentication, policy and validation. No external penetration test. |
 
@@ -53,7 +53,7 @@ against a real Linux host during development.
 | No fabricated telemetry | All values come from agent reads; missing sources are reported as unavailable (for example "no temperature sensors", "no backup center"). Charts break lines at gaps instead of interpolating. |
 | No unrestricted AI commands | No shell tool exists. 41 typed tools with schema validation; unknown arguments are rejected; every call passes `ai.Decide`. |
 | Credentials never exposed to the model | Tools receive server IDs only. Container environment *values* are never collected, and helper file reads refuse key and credential files. |
-| No plaintext passwords | Secrets are sealed with DPAPI on Windows (AES-256-GCM key file elsewhere). |
+| No plaintext passwords | Secrets, including optionally saved SSH logins, are sealed with DPAPI on Windows (AES-256-GCM key file elsewhere). A test checks that the password never appears in the database, WAL or log files. |
 | No destructive operations without authorization | High risk always needs approval and cannot be configured otherwise; reboots also need a typed hostname. No file-deletion or data-removal tool exists. |
 | No automatic SSH or firewall changes | No tools exist for them. |
 | No reboot without policy | `reboot_server` is denied unless the server's policy enables reboot requests, and it then still needs approval. |
