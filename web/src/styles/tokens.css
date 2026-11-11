@@ -1,0 +1,199 @@
+/* NEXUS design tokens. Themes override the palette; density overrides spacing. */
+
+:root {
+  --font-ui: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", "Inter", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, ui-monospace, monospace;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius: 7px;
+  --radius-lg: 10px;
+
+  --d: 1; /* density multiplier */
+  --sp-1: calc(4px * var(--d));
+  --sp-2: calc(8px * var(--d));
+  --sp-3: calc(12px * var(--d));
+  --sp-4: calc(16px * var(--d));
+  --sp-5: calc(20px * var(--d));
+  --sp-6: calc(24px * var(--d));
+  --sp-8: calc(32px * var(--d));
+  --row-h: calc(36px * var(--d));
+
+  --fs-micro: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-2xl: 26px;
+  --fs-3xl: 34px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur: 180ms;
+  --dur-slow: 420ms;
+
+  --nav-w: 232px;
+  --top-h: 52px;
+
+  --accent-h: 188;
+}
+
+/* ---------------------------------------------------------------- graphite (default dark) */
+:root,
+[data-theme="graphite"] {
+  --bg: #0a0c0f;
+  --bg-grad: radial-gradient(1200px 600px at 70% -10%, rgba(34, 211, 238, 0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(52, 211, 153, 0.035), transparent 60%);
+  --chrome: #0d1014;
+  --surface: #12161b;
+  --surface-2: #171c22;
+  --surface-3: #1d232a;
+  --hover: rgba(148, 163, 184, 0.06);
+  --press: rgba(148, 163, 184, 0.1);
+  --line: rgba(148, 163, 184, 0.1);
+  --line-2: rgba(148, 163, 184, 0.16);
+  --line-3: rgba(148, 163, 184, 0.26);
+  --text: #dbe2ea;
+  --text-2: #a3afbd;
+  --text-3: #6f7b89;
+  --text-4: #4a5461;
+  --metal: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 60%);
+
+  --accent: hsl(var(--accent-h) 86% 53%);
+  --accent-2: hsl(var(--accent-h) 90% 66%);
+  --accent-soft: hsl(var(--accent-h) 86% 53% / 0.12);
+  --accent-line: hsl(var(--accent-h) 86% 53% / 0.35);
+  --on-accent: #041015;
+
+  --ok: #3ccf91;
+  --ok-soft: rgba(60, 207, 145, 0.12);
+  --warn: #e8a948;
+  --warn-soft: rgba(232, 169, 72, 0.13);
+  --crit: #f25f5c;
+  --crit-soft: rgba(242, 95, 92, 0.13);
+  --info: #7c9ef5;
+  --info-soft: rgba(124, 158, 245, 0.13);
+  --idle: #6b7684;
+
+  --c1: var(--accent);
+  --c2: #8b7cf6;
+  --c3: #3ccf91;
+  --c4: #e8a948;
+  --c5: #f472b6;
+
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.7), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 30px 80px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--line-2);
+  --grid-line: rgba(148, 163, 184, 0.045);
+  --scrollbar: rgba(148, 163, 184, 0.18);
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- midnight */
+[data-theme="midnight"] {
+  --bg: #04060c;
+  --bg-grad: radial-gradient(1200px 700px at 80% -20%, rgba(99, 102, 241, 0.09), transparent 60%),
+    radial-gradient(1000px 600px at -10% 120%, rgba(34, 211, 238, 0.05), transparent 60%);
+  --chrome: #060912;
+  --surface: #0a0e1a;
+  --surface-2: #0e1322;
+  --surface-3: #131a2c;
+  --hover: rgba(129, 140, 248, 0.07);
+  --press: rgba(129, 140, 248, 0.12);
+  --line: rgba(129, 140, 248, 0.1);
+  --line-2: rgba(129, 140, 248, 0.17);
+  --line-3: rgba(129, 140, 248, 0.28);
+  --text: #dfe4f5;
+  --text-2: #a2abc8;
+  --text-3: #6b7495;
+  --text-4: #464e6b;
+  --grid-line: rgba(129, 140, 248, 0.05);
+  --scrollbar: rgba(129, 140, 248, 0.2);
+}
+
+/* ---------------------------------------------------------------- tactical */
+[data-theme="tactical"] {
+  --font-ui: "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+  --font-display: "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+  --bg: #060806;
+  --bg-grad: radial-gradient(1100px 600px at 50% -20%, rgba(214, 176, 74, 0.06), transparent 60%);
+  --chrome: #080a07;
+  --surface: #0d100c;
+  --surface-2: #121610;
+  --surface-3: #181d15;
+  --hover: rgba(190, 200, 150, 0.06);
+  --press: rgba(190, 200, 150, 0.1);
+  --line: rgba(190, 200, 150, 0.1);
+  --line-2: rgba(190, 200, 150, 0.17);
+  --line-3: rgba(190, 200, 150, 0.28);
+  --text: #d6dcc6;
+  --text-2: #a4ab92;
+  --text-3: #707763;
+  --text-4: #4a503f;
+  --accent-h: 44;
+  --accent: hsl(var(--accent-h) 72% 56%);
+  --accent-2: hsl(var(--accent-h) 80% 68%);
+  --on-accent: #120d02;
+  --ok: #8fd16a;
+  --ok-soft: rgba(143, 209, 106, 0.12);
+  --grid-line: rgba(190, 200, 150, 0.05);
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-lg: 4px;
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 12.5px;
+}
+
+/* ---------------------------------------------------------------- light */
+[data-theme="light"] {
+  --bg: #f3f5f8;
+  --bg-grad: radial-gradient(1200px 600px at 70% -10%, rgba(8, 145, 178, 0.06), transparent 60%);
+  --chrome: #fbfcfd;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --surface-3: #eef1f5;
+  --hover: rgba(15, 23, 42, 0.04);
+  --press: rgba(15, 23, 42, 0.07);
+  --line: rgba(15, 23, 42, 0.08);
+  --line-2: rgba(15, 23, 42, 0.13);
+  --line-3: rgba(15, 23, 42, 0.22);
+  --text: #141a21;
+  --text-2: #4b5664;
+  --text-3: #788392;
+  --text-4: #a7b0bb;
+  --metal: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 60%);
+  --accent: hsl(var(--accent-h) 85% 36%);
+  --accent-2: hsl(var(--accent-h) 85% 30%);
+  --accent-soft: hsl(var(--accent-h) 85% 36% / 0.09);
+  --accent-line: hsl(var(--accent-h) 85% 36% / 0.3);
+  --on-accent: #ffffff;
+  --ok: #138a5b;
+  --ok-soft: rgba(19, 138, 91, 0.1);
+  --warn: #b26b00;
+  --warn-soft: rgba(178, 107, 0, 0.1);
+  --crit: #cf2f2c;
+  --crit-soft: rgba(207, 47, 44, 0.09);
+  --info: #3b5fd4;
+  --info-soft: rgba(59, 95, 212, 0.09);
+  --idle: #8b95a3;
+  --c2: #6d5bd8;
+  --c3: #138a5b;
+  --c4: #b26b00;
+  --shadow: 0 10px 30px -14px rgba(15, 23, 42, 0.25), 0 2px 6px -2px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 30px 80px -20px rgba(15, 23, 42, 0.35), 0 0 0 1px var(--line-2);
+  --grid-line: rgba(15, 23, 42, 0.04);
+  --scrollbar: rgba(15, 23, 42, 0.18);
+  color-scheme: light;
+}
+
+[data-density="compact"] {
+  --d: 0.8;
+  --fs-md: 13px;
+}
+
+[data-density="spacious"] {
+  --d: 1.15;
+}

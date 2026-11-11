@@ -1,0 +1,7 @@
+/dist/
+/web/node_modules/
+/internal/core/webui/dist/*
+!/internal/core/webui/dist/README.txt
+*.test
+*.out
+/web/tsconfig.tsbuildinfo
