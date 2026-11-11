@@ -18,10 +18,8 @@ concurrency:
 env:
   NODE_VERSION: "22"
 
-# Linux jobs are pinned to ubuntu-24.04: on the ubuntu-26.04 image (the
-# ubuntu-latest label from October 2026) the Ubuntu archive hosts did not
-# resolve, so apt-get could not install NSIS. NEXUS itself is tested against
-# Ubuntu 26.04 servers separately (docs/STATUS.md).
+# Linux jobs are pinned to an Ubuntu LTS image for reproducible builds. No
+# job needs apt: the installer is built with NSIS on the Windows runner.
 jobs:
   test-linux:
     runs-on: ubuntu-24.04
@@ -50,22 +48,19 @@ jobs:
         with: { go-version-file: go.mod }
       - uses: actions/setup-node@v4
         with: { node-version: "${{ env.NODE_VERSION }}" }
-      - name: Install NSIS
-        run: sudo apt-get update -q && sudo apt-get install -y -q nsis
       - id: v
         name: Version
         run: echo "version=$(cat VERSION).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-      - name: Build UI, agents, NEXUS.exe and installer
+      - name: Build UI, agents and NEXUS.exe
         run: |
           make ui
-          make installer VERSION=${{ steps.v.outputs.version }}
+          make windows VERSION=${{ steps.v.outputs.version }}
           cp dist/linux-amd64/nexus-agent dist/nexus-agent-linux-amd64
           cp dist/linux-arm64/nexus-agent dist/nexus-agent-linux-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: nexus-${{ steps.v.outputs.version }}
           path: |
-            dist/NEXUS-Setup-*.exe
             dist/windows-amd64/NEXUS.exe
             dist/windows-amd64/nexus-core.exe
             dist/nexus-agent-linux-amd64
@@ -85,6 +80,19 @@ jobs:
         run: go test -count=1 ./internal/pki/... ./internal/core/ai/... ./internal/core/monitor/... ./internal/core/deploy/... ./internal/core/update/... ./internal/core/secrets/...
       - uses: actions/download-artifact@v4
         with: { name: "nexus-${{ needs.build.outputs.version }}", path: artifacts }
+      - name: Build the installer (NSIS)
+        shell: pwsh
+        run: |
+          $nsis = "${env:ProgramFiles(x86)}\NSIS"
+          if (-not (Test-Path "$nsis\makensis.exe")) { choco install nsis -y --no-progress; if ($LASTEXITCODE) { throw "NSIS install failed" } }
+          & "$nsis\makensis.exe" /V2 "/DVERSION=$env:VERSION" "/DNUMVERSION=$env:VERSION.0" "/DSRCDIR=..\artifacts\windows-amd64" "/DOUTFILE=..\artifacts\NEXUS-Setup-$env:VERSION.exe" installer\nexus.nsi
+          if ($LASTEXITCODE) { throw "makensis failed" }
+          Get-Item "artifacts\NEXUS-Setup-$env:VERSION.exe" | Format-List Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-installer-${{ needs.build.outputs.version }}
+          path: artifacts/NEXUS-Setup-*.exe
+          if-no-files-found: error
       - name: Core smoke test on Windows
         shell: pwsh
         run: |
@@ -146,6 +154,8 @@ jobs:
           fi
       - uses: actions/download-artifact@v4
         with: { name: "nexus-${{ env.VERSION }}", path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: "nexus-installer-${{ env.VERSION }}", path: dist }
       - name: Release notes
         run: |
           prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
