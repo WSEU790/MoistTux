@@ -18,9 +18,13 @@ concurrency:
 env:
   NODE_VERSION: "22"
 
+# Linux jobs are pinned to ubuntu-24.04: on the ubuntu-26.04 image (the
+# ubuntu-latest label from October 2026) the Ubuntu archive hosts did not
+# resolve, so apt-get could not install NSIS. NEXUS itself is tested against
+# Ubuntu 26.04 servers separately (docs/STATUS.md).
 jobs:
   test-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -36,7 +40,7 @@ jobs:
           npm --prefix web run typecheck
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test-linux
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -123,7 +127,7 @@ jobs:
           if (Test-Path $key) { throw "uninstall left the Apps & features entry" }
 
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build, test-windows]
     env:
       VERSION: ${{ needs.build.outputs.version }}
