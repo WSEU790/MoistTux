@@ -6,6 +6,7 @@ import { Bar, Empty, ErrorNote, KV, Modal, Notice, Panel, Skeleton, StatusDot, S
 import { CoreStrip, Legend, Ring, TimeSeriesChart } from "../components/Charts";
 import { ago, bytes, duration, levelClass, maxFS, netTotals, num, pct, rate, sevClass, statusClass, time } from "../lib/format";
 import type { Alert, Point, Server } from "../lib/types";
+import { SSHDeploy } from "./SSHDeploy";
 import { DockerTab, LogsTab, NetworkTab, PackagesTab, ProcessesTab, SecurityTab, ServicesTab, StorageTab, ActivityTab } from "./ServerTabs";
 
 const TABS = [
@@ -301,6 +302,7 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [rotating, setRotating] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const save = async () => {
     try {
       await api.patch(`/api/servers/${s.id}`, { ...f, port: Number(f.port), tags: f.tags.split(/[,\s]+/).filter(Boolean) });
@@ -334,6 +336,12 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
     }
   };
   const set = (k: string, v: any) => setF((p) => ({ ...p, [k]: v }));
+  if (upgrading)
+    return (
+      <Modal title={`Upgrade agent · ${s.name}`} sub={`Currently ${s.health?.agent_version ?? "unknown"}`} onClose={() => setUpgrading(false)} wide>
+        <SSHDeploy mode="upgrade" server={s} onClose={() => setUpgrading(false)} />
+      </Modal>
+    );
   return (
     <Modal title={`Server settings · ${s.name}`} onClose={onClose} footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>Save</button></>}>
       <ErrorNote error={err} />
@@ -357,6 +365,13 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
             <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>The agent generates a new key; NEXUS re-pins it over the authenticated channel.</div>
           </div>
           <button className="btn" onClick={rotate} disabled={rotating || s.status !== "online"}>{rotating ? <Icon name="refresh" className="spin" /> : <Icon name="key" />} Rotate</button>
+        </div>
+        <div className="row">
+          <div className="grow">
+            <b>Upgrade agent over SSH</b>
+            <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>Installs the agent bundled with this NEXUS build; identity and enrollment are kept.</div>
+          </div>
+          <button className="btn" onClick={() => setUpgrading(true)}><Icon name="download" /> Upgrade…</button>
         </div>
         <div className="row">
           <div className="grow">

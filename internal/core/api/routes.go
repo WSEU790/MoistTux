@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/WSEU790/MoistTux/internal/core/agentbin"
 	"github.com/WSEU790/MoistTux/internal/core/ai"
+	"github.com/WSEU790/MoistTux/internal/core/deploy"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/monitor"
 	"github.com/WSEU790/MoistTux/internal/core/notify"
@@ -85,6 +87,62 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/policies/{scope}", s.deletePolicy)
 
 	m.HandleFunc("GET /api/topology", s.topology)
+
+	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
+	m.HandleFunc("POST /api/deploy/scan", s.deployScan)
+	m.HandleFunc("POST /api/deploy", s.deployStart)
+	m.HandleFunc("GET /api/deploy/{id}", s.deployGet)
+	m.HandleFunc("POST /api/deploy/{id}/retry-enroll", func(w http.ResponseWriter, r *http.Request) {
+		j, err := s.Deploy.RetryEnroll(r.PathValue("id"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 202, j)
+	})
+}
+
+// ---------------------------------------------------------------- SSH deployment
+
+func (s *Server) deployScan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	res, err := deploy.Scan(r.Context(), strings.TrimSpace(req.Host), req.Port)
+	if err != nil {
+		writeErr(w, 502, err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) deployStart(w http.ResponseWriter, r *http.Request) {
+	var req deploy.Request
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	req.Host = strings.TrimSpace(req.Host)
+	j, err := s.Deploy.Start(req)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 202, j)
+}
+
+func (s *Server) deployGet(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.Deploy.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, errors.New("unknown deployment"))
+		return
+	}
+	writeJSON(w, 200, j)
 }
 
 // ---------------------------------------------------------------- core

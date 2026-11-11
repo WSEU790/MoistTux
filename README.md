@@ -31,10 +31,11 @@ maintenance.
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
 
+| **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo, checks the firewall, and enrolls it. Agents can also be upgraded over SSH. SSH credentials are used once and never stored. |
+
 See [`docs/STATUS.md`](docs/STATUS.md) for phase-by-phase status against the
 product directive, including what is **not** built yet (Backup Center, Compose
-editing, reverse-proxy and database integrations, SSH-based agent deployment,
-installer and auto-update).
+editing, reverse-proxy and database integrations, installer and auto-update).
 
 ## Quick start
 
@@ -42,13 +43,20 @@ installer and auto-update).
 
 ```bash
 make ui        # React/TypeScript UI → embedded into the binaries
-make all       # linux agents, nexus-core, Windows NEXUS.exe → ./dist
+make all       # linux agents (also embedded for SSH deployment), nexus-core, NEXUS.exe → ./dist
 ```
 
 Requires Go 1.26+ and Node 20+. Every target cross-compiles without CGO, so the
 Windows executable can be built on Linux or macOS.
 
-### 2. Install the agent on a Linux server
+### 2. Add a Linux server
+
+**Over SSH (recommended):** in NEXUS go to Fleet → Add server → Install over
+SSH. Enter the address, click *Check server identity*, confirm the host-key
+fingerprint, then enter an SSH user (root, or a user with sudo) and a password
+or private key. NEXUS does the rest.
+
+**Manually:**
 
 ```bash
 scp dist/linux-amd64/nexus-agent admin@server:/tmp/
@@ -68,7 +76,7 @@ in the server firewall.
   your browser instead.
 * **Linux/macOS (headless):** `./dist/nexus-core`, then open the printed URL.
 
-Go to Fleet → Add server and enter the address, the port and the code.
+For a manual install, go to Fleet → Add server → Agent already installed and enter the address, the port and the code.
 
 ### 4. Local AI
 
@@ -97,6 +105,11 @@ in-process on the test host and checks:
 * agent disconnect and recovery alerts;
 * crash recovery after a core restart;
 * certificate rotation and unenrollment.
+
+`TestSSHDeployment` runs only when `NEXUS_SSH_TEST_HOST`, `_USER` and
+`_PASSWORD` point at a disposable server. It installs the agent over SSH,
+rejects a forged host key, restarts a systemd unit through the helper, and
+uninstalls the agent again.
 
 The only simulated component is Ollama, replaced by a scripted server that
 speaks the documented `/api/chat` protocol. It exists only in the test suite.

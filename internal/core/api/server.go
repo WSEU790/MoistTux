@@ -20,6 +20,7 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/agentclient"
 	"github.com/WSEU790/MoistTux/internal/core/ai"
+	"github.com/WSEU790/MoistTux/internal/core/deploy"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/identity"
@@ -34,6 +35,7 @@ type Server struct {
 	Fleet    *fleet.Manager
 	Monitor  *monitor.Engine
 	Notifier *notify.Notifier
+	Deploy   *deploy.Manager
 	AI       *ai.Engine
 	Registry *ai.Registry
 	Policies *ai.PolicyStore

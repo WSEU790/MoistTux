@@ -19,6 +19,7 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/ai"
 	"github.com/WSEU790/MoistTux/internal/core/api"
+	"github.com/WSEU790/MoistTux/internal/core/deploy"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/identity"
@@ -45,6 +46,7 @@ type App struct {
 	Fleet    *fleet.Manager
 	Monitor  *monitor.Engine
 	Notifier *notify.Notifier
+	Deploy   *deploy.Manager
 	AI       *ai.Engine
 	API      *api.Server
 	Log      *log.Logger
@@ -135,6 +137,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		}
 		a.AI.Investigate(ctx, inc)
 	})
+	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, logger)
 	a.Fleet.SetHooks(fleet.Hooks{OnSamples: a.Monitor.OnSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
 
 	tok := make([]byte, 32)
@@ -142,7 +145,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, AI: a.AI, Registry: reg, Policies: pol,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, AI: a.AI, Registry: reg, Policies: pol,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)

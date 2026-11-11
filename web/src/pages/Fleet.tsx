@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import { navigate, useApp, useRoute } from "../lib/state";
 import { api } from "../lib/api";
 import { Icon } from "../components/Icon";
-import { Bar, Copy, Empty, ErrorNote, Modal, Notice, Panel, SkeletonRows, StatusDot, useSort } from "../components/UI";
+import { Bar, Copy, Empty, ErrorNote, Modal, Notice, Panel, SkeletonRows, StatusDot, Tabs, useSort } from "../components/UI";
+import { SSHDeploy } from "./SSHDeploy";
 import { Ring, Sparkline } from "../components/Charts";
 import { ago, duration, levelClass, maxFS, pct, statusClass } from "../lib/format";
 import type { Server } from "../lib/types";
@@ -201,6 +202,16 @@ function ServerTile({ s }: { s: Server }) {
 }
 
 export function AddServer({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<"ssh" | "code">("ssh");
+  return (
+    <Modal title="Add server" sub="Connect a Linux server to NEXUS." onClose={onClose} wide>
+      <Tabs tabs={[{ id: "ssh", label: "Install over SSH", icon: "bolt" }, { id: "code", label: "Agent already installed", icon: "key" }]} value={tab} onChange={setTab} />
+      {tab === "ssh" ? <SSHDeploy mode="install" onClose={onClose} /> : <ManualEnroll onClose={onClose} />}
+    </Modal>
+  );
+}
+
+function ManualEnroll({ onClose }: { onClose: () => void }) {
   const { reloadServers, toast } = useApp();
   const [f, setF] = useState({ name: "", address: "", port: 7443, code: "", environment: "production", group: "", tags: "" });
   const [err, setErr] = useState<string | null>(null);
@@ -223,25 +234,12 @@ export function AddServer({ onClose }: { onClose: () => void }) {
   };
   const install = "sudo ./nexus-agent install --listen :7443";
   return (
-    <Modal
-      title="Add server"
-      sub="Enroll a Linux host running the NEXUS agent."
-      onClose={onClose}
-      wide
-      footer={
-        <>
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !f.address || !f.code} onClick={submit}>
-            {busy ? <Icon name="refresh" className="spin" /> : <Icon name="lock" />} Verify & enroll
-          </button>
-        </>
-      }
-    >
+    <div className="col" style={{ gap: 16 }}>
       <div className="grid" style={{ gridTemplateColumns: "1fr 1.1fr", gap: 24 }}>
         <div className="col" style={{ gap: 12 }}>
           <div className="label">On the server</div>
           <div className="dim" style={{ fontSize: "var(--fs-sm)" }}>
-            Copy the <span className="mono">nexus-agent</span> binary for the server's architecture (amd64 or arm64) to the host, then run:
+            Use this when SSH from this PC is not possible. Copy the <span className="mono">nexus-agent</span> binary for the server's architecture (amd64 or arm64) to the host, then run:
           </div>
           <div className="row" style={{ background: "var(--chrome)", border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "8px 10px" }}>
             <code className="mono grow">{install}</code>
@@ -277,7 +275,13 @@ export function AddServer({ onClose }: { onClose: () => void }) {
           <label className="field"><span>Tags</span><input className="input" placeholder="comma separated" value={f.tags} onChange={(e) => set("tags", e.target.value)} /></label>
         </div>
       </div>
-    </Modal>
+      <div className="row" style={{ justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" disabled={busy || !f.address || !f.code} onClick={submit}>
+          {busy ? <Icon name="refresh" className="spin" /> : <Icon name="lock" />} Verify & enroll
+        </button>
+      </div>
+    </div>
   );
 }
 

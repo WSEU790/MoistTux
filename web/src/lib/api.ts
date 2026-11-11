@@ -62,7 +62,7 @@ class EventStream {
 
   private static TYPES = [
     "metrics", "server.added", "server.removed", "server.updated", "server.status", "inventory", "alert", "incident",
-    "notification", "approval", "execution", "chat.message", "chat.delta", "chat.state", "chat.conversation", "model.pull", "policy",
+    "notification", "approval", "execution", "chat.message", "chat.delta", "chat.state", "chat.conversation", "model.pull", "policy", "deploy",
   ];
 
   start() {

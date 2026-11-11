@@ -5,3 +5,4 @@
 *.test
 *.out
 /web/tsconfig.tsbuildinfo
+/internal/core/agentbin/bin/linux-*/

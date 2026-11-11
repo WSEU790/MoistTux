@@ -8,11 +8,12 @@ against a real Linux host during development.
 
 * All development and testing ran in an Ubuntu 24.04 container. Docker, nginx,
   OpenSSH and rsyslog were real; PID 1 was **not** systemd.
-* systemd service *management* (start/stop/restart/reload, dependency
-  listing, journald queries) is implemented against `systemctl` and
-  `journalctl`. It was **not** exercised against a live systemd in this
-  environment; the agent correctly reported "systemd is not PID 1".
-  Validate it on a real Debian or Ubuntu server first.
+* systemd paths were verified against disposable Ubuntu 24.04 servers booted
+  with systemd as PID 1, using SSH deployment as a non-root sudo user. Checked:
+  `nexus-agent install` and `uninstall --purge`, unit listing, health
+  assessment, journald queries, and a service restart through the helper
+  (confirmed by the main PID changing). Not yet tried on Debian or other
+  distributions.
 * The Windows executable (`NEXUS.exe`) cross-compiles cleanly but was **not
   run on Windows** here. The DPAPI, registry hardware detection, WebView2
   window and single-instance lock code paths have not been executed.
@@ -27,7 +28,7 @@ against a real Linux host during development.
 | 0 | Architecture, stack, modules, security model, protocol, Ollama integration | Done — `docs/ARCHITECTURE.md` |
 | 1 | Application shell, navigation, design system, 4 themes, accent and density, configurable dashboard, server inventory, local storage | Done |
 | 2 | Agent, secure enrollment, mTLS auth, heartbeats, telemetry, service inventory, system discovery | Done; verified (except live systemd) |
-| 2 | Agent install, upgrade and removal | `install` / `uninstall [--purge]` / re-install upgrades the binary in place. Install needs systemd and was not run end-to-end (no systemd PID 1 here); the same steps were applied by hand and the least-privilege runtime was verified. |
+| 2 | Agent install, upgrade and removal | Done; verified on systemd (install, upgrade over SSH, `uninstall --purge`) |
 | 3 | Processes, services, logs, storage, network, system monitoring, Docker | Done; verified (Docker against a real engine) |
 | 4 | Ollama integration, model discovery, capability detection, tool calling, typed tool registry, infrastructure context, conversations, diagnostics | Done; verified against the scripted Ollama server |
 | 5 | Monitoring engine, event detection, alert correlation, AI investigations, recommendations, approvals, verification | Done; verified |
@@ -41,7 +42,7 @@ against a real Linux host during development.
 | 7 | SSH analysis, authentication events, posture, recommendations, audit log | Done. auditd, AIDE and Lynis are detected but not integrated. |
 | 8 | Scheduler, Backup Center, restore, restore testing, maintenance windows, automation policies, recovery workflows | Policies and maintenance windows (enforced for autonomous actions) are done. **Backups, restore, scheduled maintenance jobs and update scheduling are not started.** The UI says so explicitly and never shows backup data. |
 | 9 | Server groups, tags, environments, fleet monitoring, cross-server views, centralized alerts | Done |
-| 9 | Remote agent deployment over SSH | **Not started**; agents are installed manually |
+| 9 | Remote agent deployment over SSH | Done; verified. Fleet → Add server → Install over SSH: password or private key, sudo with or without a password, host-key confirmation (checked against `known_hosts`), embedded agent upload with SHA-256 verification, firewall check, enrollment, and retry after the port is opened. Agent upgrade over SSH from server settings. SSH credentials are never stored. |
 | 10 | Installer (MSI/MSIX), code signing, auto-update, release packaging | **Not started** |
 | 10 | Security testing | Unit and integration tests for authentication, policy and validation. No external penetration test. |
 
