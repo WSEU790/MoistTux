@@ -30,12 +30,15 @@ maintenance.
 | **Desktop UI** | Command Center (customisable layout), Fleet, server workspace (overview with historical charts and nine operational tabs), AI Command Center, Incidents and Alerts, Approvals, interactive Topology, Policies editor, Memory, Activity and hash-chained Audit, and Settings. Four themes (Graphite, Midnight, Tactical, Light) plus custom accent and density. |
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
-
 | **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo, checks the firewall, and enrolls it. Agents can also be upgraded or repaired over SSH. The SSH login is not stored unless you tick *Remember this SSH login*; it is then encrypted with your Windows account (DPAPI) and can be forgotten at any time. Day-to-day monitoring never uses SSH. |
+| **Installer and updates** | Per-user Windows installer (no administrator rights) and signed self-update from GitHub Releases. See [Releases and updates](#releases-and-updates). |
 
 See [`docs/STATUS.md`](docs/STATUS.md) for phase-by-phase status against the
 product directive, including what is **not** built yet (Backup Center, Compose
-editing, reverse-proxy and database integrations, installer and auto-update).
+editing, reverse-proxy and database integrations, code signing).
+
+**Working on NEXUS?** Start with the developer handbook,
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Quick start
 
@@ -65,7 +68,9 @@ make all         # linux agents (also embedded for SSH deployment), nexus-core,
 Requires Go 1.26+, Node 20+ and NSIS (`apt install nsis`) for the installer.
 Every target cross-compiles without CGO, so the Windows executable and
 installer can be built on Linux or macOS. Local builds are versioned
-`<VERSION>.0-dev` and never update themselves.
+`<VERSION>.0-dev` and never update themselves. The full development setup
+(hot-reload UI, test agents, lab servers) is in
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ### 2. Add a Linux server
 
@@ -106,13 +111,14 @@ Every push to `main` or `nexus-foundation` runs
 
 1. **test-linux** runs `go vet`, the Go tests (including the end-to-end agent
    and core test) and the UI type-check.
-2. **build** creates the UI, the agents, `NEXUS.exe` (with icon, version
-   information and a per-monitor DPI manifest) and `NEXUS-Setup-<version>.exe`.
-   The version is `<VERSION file>.<run number>`.
+2. **build** creates the UI, the agents and `NEXUS.exe` (with icon, version
+   information and a per-monitor DPI manifest). The version is
+   `<VERSION file>.<run number>`.
 3. **test-windows** runs on a real Windows runner. It runs the unit tests
-   (DPAPI, policy, updater, saved logins) and a smoke test of the core
-   (identity sealed with DPAPI, updater enabled). It then installs silently,
-   updates over a running NEXUS with relaunch, and uninstalls.
+   (DPAPI, policy, updater, saved logins), builds `NEXUS-Setup-<version>.exe`
+   with NSIS, and smoke-tests the core (identity sealed with DPAPI, updater
+   enabled). It then installs silently, updates over a running NEXUS with
+   relaunch, and uninstalls.
 4. **release** signs `nexus-update.json` with the `NEXUS_UPDATE_SIGNING_KEY`
    secret and publishes GitHub Release `v<version>`: the installer, the
    signed manifest and the Linux agents.
@@ -156,14 +162,30 @@ speaks the documented `/api/chat` protocol. It exists only in the test suite.
 ## Repository layout
 
 ```
-cmd/nexus-agent     Linux agent (run, install, enroll-code, revoke, helper)
-cmd/nexus-core      Headless core + console (dev, non-Windows)
-cmd/nexus           Windows desktop app (WebView2)
-internal/agent      Agent server, collectors, privileged helper, installers
-internal/core       store · secrets · identity · agentclient · fleet · monitor ·
-                    notify · ollama · ai (tools, policy, engine) · api · app
+cmd/nexus           Windows desktop app (core + WebView2 window)
+cmd/nexus-core      Headless core + console (development, tests, Linux/macOS)
+cmd/nexus-agent     Linux agent (run, install, uninstall, enroll-code, revoke, helper)
+cmd/nexus-release   Release signing (keygen, manifest, verify)
+cmd/nexus-winres    Windows icon, version info and manifest
+internal/agent      Agent server, collectors, privileged helper, installer
+internal/core       app · store · secrets · identity · agentclient · fleet ·
+                    monitor · notify · ollama · ai · api · deploy · agentbin ·
+                    update · webui · events
 internal/protocol   Agent ↔ core wire types (v1)
 internal/pki        Keys, fingerprints, enrollment codes
+internal/integration  End-to-end tests (real agent + real core)
 web/                Desktop UI (React + TypeScript + Vite)
-docs/               Architecture, security model, protocol, status
+installer/          NSIS installer script and assets
+release/            Public key for verifying updates
+docs/               Developer handbook, architecture, protocol, status
 ```
+
+## Documentation
+
+| Document | For |
+|---|---|
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Developers: setup, layout, request flow, how to add features, tests, lab servers, releases, troubleshooting |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | The rules every change must keep, and the workflow |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Design decisions and the security model |
+| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Agent API, enrollment, certificates, privileged helper |
+| [`docs/STATUS.md`](docs/STATUS.md) | What is built, how it was verified, what is missing |
