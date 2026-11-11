@@ -13,7 +13,8 @@ permissions:
 
 concurrency:
   group: release
-  cancel-in-progress: false
+  # A newer push supersedes an older run: only the latest commit is released.
+  cancel-in-progress: true
 
 env:
   NODE_VERSION: "22"
@@ -69,6 +70,7 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     needs: build
     env:
       VERSION: ${{ needs.build.outputs.version }}
@@ -111,11 +113,13 @@ jobs:
           Stop-Process -Id $p.Id
       - name: Installer test (install, update over a running app, uninstall)
         shell: pwsh
+        # Start-Process -Wait would also wait for the NEXUS that the installer
+        # relaunches, so each step waits for the installer process only.
         run: |
           $setup = (Get-ChildItem artifacts\NEXUS-Setup-*.exe | Select-Object -First 1).FullName
           $dir = "$env:LOCALAPPDATA\Programs\NEXUS"
           $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NEXUS"
-          Start-Process -FilePath $setup -ArgumentList "/S" -Wait
+          (Start-Process -FilePath $setup -ArgumentList "/S" -PassThru).WaitForExit()
           if (-not (Test-Path "$dir\NEXUS.exe")) { throw "NEXUS.exe was not installed" }
           if ((Get-ItemProperty $key).DisplayVersion -ne $env:VERSION) { throw "Apps & features entry has the wrong version" }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\NEXUS.lnk")) { throw "Start menu shortcut missing" }
@@ -123,14 +127,14 @@ jobs:
           $app = Start-Process -FilePath "$dir\NEXUS.exe" -ArgumentList "--headless","--data","$env:RUNNER_TEMP\nexus-app" -PassThru
           Start-Sleep -Seconds 5
           $sw = [Diagnostics.Stopwatch]::StartNew()
-          Start-Process -FilePath $setup -ArgumentList "/S","/UPDATE","/RELAUNCH" -Wait
+          (Start-Process -FilePath $setup -ArgumentList "/S","/UPDATE","/RELAUNCH" -PassThru).WaitForExit()
           Write-Host "update install took $($sw.Elapsed.TotalSeconds)s"
           if (-not $app.HasExited) { throw "running NEXUS was not closed by the installer" }
           Start-Sleep -Seconds 3
           if (-not (Get-Process NEXUS -ErrorAction SilentlyContinue)) { throw "NEXUS was not relaunched after the update" }
           Stop-Process -Name NEXUS -Force
           Start-Sleep -Seconds 2
-          Start-Process -FilePath "$dir\Uninstall.exe" -ArgumentList "/S","_?=$dir" -Wait
+          (Start-Process -FilePath "$dir\Uninstall.exe" -ArgumentList "/S","_?=$dir" -PassThru).WaitForExit()
           if (Test-Path "$dir\NEXUS.exe") { throw "uninstall left NEXUS.exe behind" }
           if (Test-Path $key) { throw "uninstall left the Apps & features entry" }
 
