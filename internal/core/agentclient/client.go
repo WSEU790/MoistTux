@@ -49,8 +49,18 @@ type Client struct {
 	lastFP  string
 }
 
+// DialFunc opens the transport to an agent. nil means a direct TCP
+// connection; an SSH tunnel supplies its own. TLS with pinned certificates
+// runs on top either way.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
 // New creates a client for host:port accepting only the given fingerprints.
 func New(address string, port int, clientCert tls.Certificate, fingerprints ...string) *Client {
+	return NewVia(nil, address, port, clientCert, fingerprints...)
+}
+
+// NewVia is New over a custom transport (for example an SSH tunnel).
+func NewVia(dial DialFunc, address string, port int, clientCert tls.Certificate, fingerprints ...string) *Client {
 	c := &Client{base: "https://" + net.JoinHostPort(address, strconv.Itoa(port)), pinned: fingerprints}
 	cfg := pki.PinnedClientTLS(&clientCert, func(fp string) error {
 		c.mu.Lock()
@@ -63,9 +73,12 @@ func New(address string, port int, clientCert tls.Certificate, fingerprints ...s
 		}
 		return ErrFingerprintMismatch
 	})
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
 	tr := &http.Transport{
 		TLSClientConfig:     cfg,
-		DialContext:         (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:         dial,
 		TLSHandshakeTimeout: 8 * time.Second,
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     90 * time.Second,
@@ -181,6 +194,11 @@ type EnrollResult struct {
 // accepted only if the agent's certificate matches the fingerprint embedded in
 // the enrollment code, so no trust-on-first-use window exists.
 func Enroll(ctx context.Context, address string, port int, code string, clientCert tls.Certificate, clientCertPEM []byte, label string) (*EnrollResult, error) {
+	return EnrollVia(ctx, nil, address, port, code, clientCert, clientCertPEM, label)
+}
+
+// EnrollVia is Enroll over a custom transport (for example an SSH tunnel).
+func EnrollVia(ctx context.Context, dial DialFunc, address string, port int, code string, clientCert tls.Certificate, clientCertPEM []byte, label string) (*EnrollResult, error) {
 	ec, err := pki.ParseEnrollmentCode(code)
 	if err != nil {
 		return nil, err
@@ -193,7 +211,7 @@ func Enroll(ctx context.Context, address string, port int, code string, clientCe
 		}
 		return nil
 	})
-	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: cfg, TLSHandshakeTimeout: 10 * time.Second}, Timeout: 30 * time.Second}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: cfg, TLSHandshakeTimeout: 10 * time.Second, DialContext: dial}, Timeout: 30 * time.Second}
 	defer hc.CloseIdleConnections()
 	body, _ := json.Marshal(protocol.EnrollRequest{Token: b32(ec.Token), ClientCert: string(clientCertPEM), Label: label})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+net.JoinHostPort(address, strconv.Itoa(port))+"/v1/enroll", bytes.NewReader(body))

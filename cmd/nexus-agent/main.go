@@ -26,6 +26,7 @@ Usage:
   nexus-agent run [--listen :7443] [--state-dir DIR] [--interval 5s] run in the foreground
   nexus-agent uninstall [--purge]                                   remove the service (root)
   nexus-agent version
+  nexus-agent bridge PORT    pipe stdin/stdout to 127.0.0.1:PORT (forced command of NEXUS's SSH tunnel key)
 `, agent.Version)
 }
 
@@ -43,6 +44,8 @@ func main() {
 	switch cmd {
 	case "helper":
 		os.Exit(agent.HelperMain(args))
+	case "bridge":
+		os.Exit(agent.Bridge(args))
 	case "version", "--version":
 		fmt.Println(agent.Version)
 	case "run":

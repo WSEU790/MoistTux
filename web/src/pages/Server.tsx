@@ -388,13 +388,24 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
 
 function SavedLogin({ serverId }: { serverId: string }) {
   const { toast } = useApp();
-  const [saved, setSaved] = useState<{ saved: boolean; credential?: { user: string; host: string; auth_kind: string; created_at: string } } | null>(null);
+  const [saved, setSaved] = useState<{ saved: boolean; credential?: { user: string; host: string; auth_kind: string; created_at: string }; tunnel?: { user: string; host: string; port: number; agent_port: number; created_at: string } | null } | null>(null);
   const load = () => api.get<any>(`/api/servers/${serverId}/ssh`).then(setSaved).catch(() => setSaved({ saved: false }));
   React.useEffect(() => {
     load();
   }, [serverId]);
   if (!saved) return null;
   return (
+    <>
+    <div className="row">
+      <div className="grow">
+        <b>Connection</b>
+        <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>
+          {saved.tunnel
+            ? `Encrypted SSH tunnel via ${saved.tunnel.user}@${saved.tunnel.host}:${saved.tunnel.port} with a tunnel-only key (no shell) · the agent listens on 127.0.0.1:${saved.tunnel.agent_port} only · set up ${new Date(saved.tunnel.created_at).toLocaleDateString()}`
+            : "Direct to the agent port (TLS with pinned certificates)."}
+        </div>
+      </div>
+    </div>
     <div className="row">
       <div className="grow">
         <b>Saved SSH login</b>
@@ -408,5 +419,6 @@ function SavedLogin({ serverId }: { serverId: string }) {
         </button>
       )}
     </div>
+    </>
   );
 }

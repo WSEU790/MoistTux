@@ -107,12 +107,16 @@ func (s *Server) routes(m *http.ServeMux) {
 	})
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
 	m.HandleFunc("GET /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
-		c, err := s.Deploy.Saved(r.Context(), r.PathValue("id"))
-		if err != nil {
-			writeJSON(w, 200, map[string]any{"saved": false})
-			return
+		out := map[string]any{"saved": false, "tunnel": nil}
+		if c, err := s.Deploy.Saved(r.Context(), r.PathValue("id")); err == nil {
+			out["saved"], out["credential"] = true, c
 		}
-		writeJSON(w, 200, map[string]any{"saved": true, "credential": c})
+		// How NEXUS reaches the agent: null = directly, otherwise the SSH
+		// tunnel (the sealed key is never returned).
+		if t, err := s.Store.GetSSHTunnel(r.Context(), r.PathValue("id")); err == nil {
+			out["tunnel"] = t
+		}
+		writeJSON(w, 200, out)
 	})
 	m.HandleFunc("DELETE /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
 		ok, err := s.Deploy.Forget(r.Context(), r.PathValue("id"), "operator")

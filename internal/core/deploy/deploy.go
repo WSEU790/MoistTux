@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -35,6 +34,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/store"
+	"github.com/WSEU790/MoistTux/internal/core/tunnel"
 )
 
 // ---------------------------------------------------------------- host key scan
@@ -153,6 +153,11 @@ type Request struct {
 	Tags        []string `json:"tags"`
 	Remember    bool     `json:"remember"`  // save this login (sealed) for later upgrades and repairs
 	UseSaved    bool     `json:"use_saved"` // upgrade with the login saved for ServerID
+	// Connection: "auto" (direct when the agent port is reachable from this
+	// PC, otherwise through SSH), "direct" or "ssh". Using SSH adds a
+	// tunnel-only key to the SSH user's authorized_keys, so the operator
+	// chooses it explicitly in the install form.
+	Connection string `json:"connection"`
 }
 
 // secretBundle is what gets sealed when an operator chooses to remember a login.
@@ -283,7 +288,7 @@ var stepDefs = [][2]string{
 	{"inspect", "Inspect server (architecture, systemd, privileges)"},
 	{"upload", "Upload agent binary and verify checksum"},
 	{"install", "Install least-privilege agent service"},
-	{"network", "Check agent port and firewall"},
+	{"network", "Choose connection (direct or SSH tunnel)"},
 	{"enroll", "Verify agent identity and enroll"},
 }
 
@@ -351,6 +356,13 @@ func (m *Manager) Start(req Request) (*Job, error) {
 	if !reFP.MatchString(req.HostKey) {
 		return nil, errors.New("confirm the server's SSH host key first")
 	}
+	switch req.Connection {
+	case "":
+		req.Connection = "auto"
+	case "auto", "direct", "ssh":
+	default:
+		return nil, errors.New("connection must be auto, direct or ssh")
+	}
 	if req.Mode == "upgrade" {
 		if _, err := m.st.GetServer(context.Background(), req.ServerID); err != nil {
 			return nil, errors.New("unknown server to upgrade")
@@ -372,7 +384,7 @@ func (m *Manager) Start(req Request) (*Job, error) {
 	m.mu.Lock()
 	m.jobs[j.ID] = j
 	m.mu.Unlock()
-	_ = m.st.Audit(context.Background(), "operator", "deploy."+req.Mode+".start", req.Host, map[string]any{"job": j.ID, "ssh_user": req.User, "ssh_port": req.SSHPort, "host_key": req.HostKey, "agent_port": req.AgentPort, "docker": req.Docker, "auth": authKind(req), "saved_login": req.UseSaved, "remember": req.Remember})
+	_ = m.st.Audit(context.Background(), "operator", "deploy."+req.Mode+".start", req.Host, map[string]any{"job": j.ID, "ssh_user": req.User, "ssh_port": req.SSHPort, "host_key": req.HostKey, "agent_port": req.AgentPort, "docker": req.Docker, "auth": authKind(req), "saved_login": req.UseSaved, "remember": req.Remember, "connection": req.Connection})
 	go m.run(j, req)
 	return j.snapshot(), nil
 }
@@ -595,7 +607,7 @@ func (m *Manager) run(j *Job, req Request) {
 
 	// 2. inspect
 	m.step(j, "inspect", "running", "")
-	out, _, _, err := r.run(ctx, `uname -m; id -u; (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || echo unknown; if [ -d /run/systemd/system ]; then echo systemd; else echo nosystemd; fi; hostname`, nil, false, 30*time.Second)
+	out, _, _, err := r.run(ctx, `uname -m; id -u; (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || echo unknown; if [ -d /run/systemd/system ]; then echo systemd; else echo nosystemd; fi; hostname; echo "${SSH_CONNECTION%% *}"`, nil, false, 30*time.Second)
 	if err != nil {
 		m.step(j, "inspect", "failed", err.Error())
 		m.finish(j, err, "")
@@ -615,6 +627,15 @@ func (m *Manager) run(j *Job, req Request) {
 	}
 	r.root = strings.TrimSpace(f[1]) == "0"
 	osName, initSys, hostname := strings.TrimSpace(f[2]), strings.TrimSpace(f[3]), strings.TrimSpace(f[4])
+	// The address the server sees for this PC (after NAT), which is what a
+	// firewall rule must allow; the local address is only a fallback.
+	seenIP := localIP
+	if len(f) > 5 {
+		if ip := net.ParseIP(strings.TrimSpace(f[5])); ip != nil {
+			seenIP = ip.String()
+		}
+	}
+	m.fact(j, "seen_ip", seenIP)
 	m.fact(j, "arch", arch)
 	m.fact(j, "os", osName)
 	m.fact(j, "hostname", hostname)
@@ -681,11 +702,23 @@ func (m *Manager) run(j *Job, req Request) {
 
 	// 4. install
 	m.step(j, "install", "running", "")
-	cmd := fmt.Sprintf("%s install --listen :%d", tmp, req.AgentPort)
-	if req.Docker {
-		cmd += " --docker"
+	var existing *store.SSHTunnel
+	if req.Mode == "upgrade" {
+		existing, _ = m.st.GetSSHTunnel(ctx, req.ServerID)
 	}
-	iout, ierr, code, err := r.run(ctx, cmd, nil, true, 5*time.Minute)
+	installCmd := func(loopback bool) string {
+		listen := fmt.Sprintf(":%d", req.AgentPort)
+		if loopback {
+			listen = fmt.Sprintf("127.0.0.1:%d", req.AgentPort)
+		}
+		c := fmt.Sprintf("%s install --listen %s", tmp, listen)
+		if req.Docker {
+			c += " --docker"
+		}
+		return c
+	}
+	loopback := existing != nil || (req.Mode == "install" && req.Connection == "ssh")
+	iout, ierr, code, err := r.run(ctx, installCmd(loopback), nil, true, 5*time.Minute)
 	if err != nil || code != 0 {
 		detail := tail(iout+"\n"+ierr, 6)
 		m.step(j, "install", "failed", detail)
@@ -700,18 +733,64 @@ func (m *Manager) run(j *Job, req Request) {
 	}
 	m.step(j, "install", "done", "service user nexus · sudoers helper rule · systemd unit nexus-agent.service enabled and started")
 
-	// 5. network
+	// 5. connection: direct when this PC can reach the agent port, otherwise
+	// (when the operator allowed it) through an SSH tunnel.
 	m.step(j, "network", "running", "")
-	note := fmt.Sprintf("agent listening on :%d", req.AgentPort)
-	status := "done"
-	if fw, _, _, _ := r.run(ctx, "ufw status", nil, true, 20*time.Second); strings.Contains(fw, "Status: active") {
-		portRe := regexp.MustCompile(`(?m)^\s*` + strconv.Itoa(req.AgentPort) + `(/tcp)?\s+ALLOW`)
-		if !portRe.MatchString(fw) {
-			status = "warning"
-			note = fmt.Sprintf("ufw is active and has no rule for port %d. NEXUS does not change firewalls; to allow this PC run: sudo ufw allow from %s to any port %d proto tcp", req.AgentPort, localIP, req.AgentPort)
+	var tun *tunnel.Tunnel
+	var tunRow *store.SSHTunnel
+	switch {
+	case existing != nil:
+		// Upgrade of a tunneled server: keep the agent on 127.0.0.1 and make
+		// sure the tunnel key is still authorized (repair).
+		if err := ensureAuthorizedKey(ctx, r, existing.AuthorizedKey, keyMarker(existing.AuthorizedKey)); err != nil {
+			m.step(j, "network", "failed", err.Error())
+			m.finish(j, err, "")
+			return
+		}
+		m.step(j, "network", "done", fmt.Sprintf("SSH tunnel via %s@%s:%d · agent listens on 127.0.0.1:%d only · tunnel key present", existing.User, existing.Host, existing.Port, existing.AgentPort))
+	case req.Mode == "upgrade":
+		status, note := m.firewallNote(ctx, r, req.AgentPort, seenIP)
+		m.step(j, "network", status, note)
+	default:
+		why := ""
+		if !loopback {
+			err := reachable(ctx, req.Host, req.AgentPort)
+			switch {
+			case err == nil:
+				m.step(j, "network", "done", fmt.Sprintf("direct: this PC reaches the agent on %s:%d", req.Host, req.AgentPort))
+			case req.Connection == "direct":
+				status, note := m.firewallNote(ctx, r, req.AgentPort, seenIP)
+				if status == "done" {
+					status, note = "warning", fmt.Sprintf("this PC cannot reach port %d (%s)", req.AgentPort, shortNetErr(err))
+				}
+				m.step(j, "network", status, note)
+			default:
+				why = fmt.Sprintf("port %d is not reachable from this PC (%s), so ", req.AgentPort, shortNetErr(err))
+				// Move the agent to 127.0.0.1: nothing stays exposed.
+				out, se, code, err := r.run(ctx, installCmd(true), nil, true, 5*time.Minute)
+				if err != nil || code != 0 {
+					m.step(j, "network", "failed", "could not switch the agent to 127.0.0.1: "+tail(out+"\n"+se, 4))
+					m.finish(j, errors.New("could not reconfigure the agent for the SSH tunnel"), "")
+					return
+				}
+				if c := reCode.FindString(out); c != "" {
+					enrollCode = c
+				}
+				loopback = true
+			}
+		}
+		if loopback {
+			var err error
+			tun, tunRow, err = m.setupTunnel(ctx, r, req)
+			if err != nil {
+				m.step(j, "network", "failed", err.Error())
+				m.finish(j, fmt.Errorf("SSH tunnel could not be set up: %w", err), fmt.Sprintf("NEXUS signs in with a tunnel-only key that it adds to %s's ~/.ssh/authorized_keys. That needs public-key logins for this user in sshd (PubkeyAuthentication yes, and the default AuthorizedKeysFile) and no ForceCommand overriding the key's command. Alternatively, allow port %d from %s in the server firewall and choose the direct connection.", req.User, req.AgentPort, seenIP))
+				return
+			}
+			defer tun.Close()
+			m.step(j, "network", "done", fmt.Sprintf("%susing an encrypted SSH tunnel via %s@%s:%d · agent listens on 127.0.0.1:%d only · no firewall change needed", why, req.User, req.Host, req.SSHPort, req.AgentPort))
 		}
 	}
-	m.step(j, "network", status, note)
 
 	// 6. enroll or reconnect
 	m.step(j, "enroll", "running", "")
@@ -744,7 +823,10 @@ func (m *Manager) run(j *Job, req Request) {
 		return
 	}
 	er := &fleet.EnrollRequest{Name: req.Name, Address: req.Host, Port: req.AgentPort, Code: enrollCode, Environment: req.Environment, Group: req.Group, Tags: req.Tags}
-	m.enroll(ctx, j, er, localIP)
+	if tun != nil {
+		er.Dial, er.Tunnel = tun.Dial, tunRow
+	}
+	m.enroll(ctx, j, er, seenIP)
 }
 
 // reachable probes the agent port; refused connections are retried because
@@ -768,9 +850,24 @@ func reachable(ctx context.Context, host string, port int) error {
 	return err
 }
 
-func (m *Manager) enroll(ctx context.Context, j *Job, er *fleet.EnrollRequest, localIP string) {
+func (m *Manager) enroll(ctx context.Context, j *Job, er *fleet.EnrollRequest, seenIP string) {
+	if er.Dial != nil {
+		srv, err := m.fleet.Enroll(ctx, *er)
+		if err != nil {
+			m.step(j, "enroll", "failed", err.Error())
+			m.finish(j, err, "")
+			return
+		}
+		m.mu.Lock()
+		j.ServerID = srv.ID
+		m.mu.Unlock()
+		m.persistSaved(j, srv.ID)
+		m.step(j, "enroll", "done", fmt.Sprintf("enrolled as %s through the SSH tunnel · agent fingerprint %s… matched", srv.Name, srv.AgentFingerprint[:16]))
+		m.finish(j, nil, "")
+		return
+	}
 	if err := reachable(ctx, er.Address, er.Port); err != nil {
-		hint := fmt.Sprintf("The agent is installed and running on the server, but this PC cannot connect to %s:%d (%v). Allow that port from this PC in the server firewall and any cloud security group — for ufw: sudo ufw allow from %s to any port %d proto tcp — then choose Retry enrollment.", er.Address, er.Port, err, localIP, er.Port)
+		hint := fmt.Sprintf("The agent is installed and running on the server, but this PC cannot connect to %s:%d (%s). Either install again with the connection set to Automatic, which uses an SSH tunnel and needs no firewall change, or allow the port for this PC (the server sees it as %s) in the server firewall and any cloud security group — for ufw: sudo ufw allow from %s to any port %d proto tcp — then choose Retry enrollment.", er.Address, er.Port, shortNetErr(err), seenIP, seenIP, er.Port)
 		m.mu.Lock()
 		j.pending, j.CanRetry = er, true
 		m.mu.Unlock()
@@ -814,14 +911,95 @@ func (m *Manager) RetryEnroll(id string) (*Job, error) {
 	er := j.pending
 	j.State, j.Error, j.Hint, j.Finished, j.CanRetry = "running", "", "", nil, false
 	m.mu.Unlock()
-	localIP := j.Facts["workstation_ip"]
+	seenIP := j.Facts["seen_ip"]
+	if seenIP == "" {
+		seenIP = j.Facts["workstation_ip"]
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		m.step(j, "enroll", "running", "retrying")
-		m.enroll(ctx, j, er, localIP)
+		m.enroll(ctx, j, er, seenIP)
 	}()
 	return j.snapshot(), nil
 }
 
-var _ = io.Discard
+// firewallNote reports whether ufw on the server allows the agent port.
+func (m *Manager) firewallNote(ctx context.Context, r *remote, port int, seenIP string) (string, string) {
+	if fw, _, _, _ := r.run(ctx, "ufw status", nil, true, 20*time.Second); strings.Contains(fw, "Status: active") {
+		portRe := regexp.MustCompile(`(?m)^\s*` + strconv.Itoa(port) + `(/tcp)?\s+ALLOW`)
+		if !portRe.MatchString(fw) {
+			return "warning", fmt.Sprintf("ufw is active and has no rule for port %d. NEXUS does not change firewalls; to allow this PC (seen by the server as %s) run: sudo ufw allow from %s to any port %d proto tcp", port, seenIP, seenIP, port)
+		}
+	}
+	return "done", fmt.Sprintf("agent listening on :%d", port)
+}
+
+func shortNetErr(err error) string {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return "connection timed out: a firewall is dropping it"
+	}
+	if strings.Contains(err.Error(), "refused") {
+		return "connection refused"
+	}
+	return err.Error()
+}
+
+var reMarker = regexp.MustCompile(`nexus-tunnel:[A-Za-z0-9]{8,64}$`)
+
+func keyMarker(authorizedLine string) string { return reMarker.FindString(strings.TrimSpace(authorizedLine)) }
+
+// ensureAuthorizedKey writes the tunnel key line into the SSH user's
+// authorized_keys, replacing an earlier key from this NEXUS (same marker)
+// and leaving every other line untouched. The line arrives on stdin.
+func ensureAuthorizedKey(ctx context.Context, r *remote, line, marker string) error {
+	if marker == "" || !reMarker.MatchString(marker) {
+		return errors.New("invalid tunnel key marker")
+	}
+	script := `sh -c 'umask 077; d="$HOME/.ssh"; f="$d/authorized_keys"; IFS= read -r l || exit 3; mkdir -p "$d" && touch "$f" && { grep -v -F -e "$1" "$f" > "$f.nexus-tmp"; printf "%s\n" "$l" >> "$f.nexus-tmp"; } && cat "$f.nexus-tmp" > "$f" && rm -f "$f.nexus-tmp" && grep -c -F -e "$1" "$f"' nexus ` + marker
+	out, se, code, err := r.run(ctx, script, []byte(line+"\n"), false, 30*time.Second)
+	if err != nil || code != 0 || strings.TrimSpace(out) != "1" {
+		return fmt.Errorf("could not update ~/.ssh/authorized_keys (exit %d): %v %s", code, err, tail(se, 2))
+	}
+	return nil
+}
+
+// setupTunnel creates a tunnel-only key, authorizes it for the SSH user and
+// proves it works by opening the tunnel to the agent with it.
+func (m *Manager) setupTunnel(ctx context.Context, r *remote, req Request) (*tunnel.Tunnel, *store.SSHTunnel, error) {
+	fp := m.fleet.CoreFingerprint()
+	if len(fp) > 16 {
+		fp = fp[:16]
+	}
+	marker := "nexus-tunnel:" + regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(fp, "")
+	key, err := tunnel.NewKey(req.AgentPort, marker)
+	if err != nil {
+		return nil, nil, err
+	}
+	sealed, err := secrets.Seal(m.prot, key.PrivatePEM)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not protect the tunnel key: %w", err)
+	}
+	if err := ensureAuthorizedKey(ctx, r, key.AuthorizedKey, marker); err != nil {
+		return nil, nil, err
+	}
+	t := tunnel.New(tunnel.Config{Host: req.Host, Port: req.SSHPort, User: req.User, HostKey: req.HostKey, AgentPort: req.AgentPort, Signer: key.Signer})
+	var lastErr error
+	for i := 0; i < 12; i++ { // the agent restarts after reinstalling
+		dctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		err := t.Check(dctx)
+		cancel()
+		if err == nil {
+			row := &store.SSHTunnel{Host: req.Host, Port: req.SSHPort, User: req.User, HostKey: req.HostKey, AgentPort: req.AgentPort, AuthorizedKey: key.AuthorizedKey, SealedKey: sealed}
+			return t, row, nil
+		}
+		lastErr = err
+		if strings.Contains(err.Error(), "unable to authenticate") || strings.Contains(err.Error(), "host key") {
+			break
+		}
+		time.Sleep(1500 * time.Millisecond)
+	}
+	t.Close()
+	return nil, nil, lastErr
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/notify"
 	"github.com/WSEU790/MoistTux/internal/core/secrets"
 	"github.com/WSEU790/MoistTux/internal/core/store"
+	"github.com/WSEU790/MoistTux/internal/core/tunnel"
 	"github.com/WSEU790/MoistTux/internal/core/update"
 	"github.com/WSEU790/MoistTux/internal/core/webui"
 )
@@ -165,6 +166,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		}
 		a.AI.Investigate(ctx, inc)
 	})
+	a.Fleet.SetDialers(tunnel.NewManager(st, prot, logger))
 	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, prot, logger)
 	a.Fleet.SetHooks(fleet.Hooks{OnSamples: a.Monitor.OnSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
 

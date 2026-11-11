@@ -57,6 +57,7 @@ type Manager struct {
 	mu      sync.RWMutex
 	cfg     Config
 	hooks   Hooks
+	dialers Dialers
 	workers map[string]*worker
 	ctx     context.Context
 }
@@ -66,6 +67,18 @@ func New(st *store.Store, bus *events.Bus, ident func() *identity.Identity, cfg 
 }
 
 func (m *Manager) SetHooks(h Hooks) { m.mu.Lock(); m.hooks = h; m.mu.Unlock() }
+
+// Dialers supplies the transport for servers reached through an SSH tunnel
+// (internal/core/tunnel). Servers without one are dialed directly.
+type Dialers interface {
+	Dialer(ctx context.Context, serverID string) (func(ctx context.Context, network, addr string) (net.Conn, error), error)
+	Forget(serverID string)
+}
+
+func (m *Manager) SetDialers(d Dialers) { m.mu.Lock(); m.dialers = d; m.mu.Unlock() }
+
+// CoreFingerprint identifies this NEXUS installation (its certificate).
+func (m *Manager) CoreFingerprint() string { return m.ident().Fingerprint }
 
 func (m *Manager) SetConfig(cfg Config) {
 	m.mu.Lock()
@@ -93,7 +106,18 @@ func (m *Manager) newClient(s *store.Server) *agentclient.Client {
 	if s.PendingFingerprint != "" {
 		fps = append(fps, s.PendingFingerprint)
 	}
-	return agentclient.New(s.Address, s.Port, m.ident().Cert, fps...)
+	var dial agentclient.DialFunc
+	if m.dialers != nil {
+		d, err := m.dialers.Dialer(context.Background(), s.ID)
+		switch {
+		case err != nil:
+			m.log.Printf("server %s: %v", s.Name, err)
+			dial = func(context.Context, string, string) (net.Conn, error) { return nil, err }
+		case d != nil:
+			dial = d
+		}
+	}
+	return agentclient.NewVia(dial, s.Address, s.Port, m.ident().Cert, fps...)
 }
 
 func (m *Manager) startWorker(s *store.Server) {
@@ -148,6 +172,10 @@ type EnrollRequest struct {
 	Environment string   `json:"environment"`
 	Group       string   `json:"group"`
 	Tags        []string `json:"tags"`
+
+	// Set by SSH deployment when the agent is reached through an SSH tunnel.
+	Dial   agentclient.DialFunc `json:"-"`
+	Tunnel *store.SSHTunnel     `json:"-"`
 }
 
 func (m *Manager) Enroll(ctx context.Context, req EnrollRequest) (*store.Server, error) {
@@ -179,7 +207,7 @@ func (m *Manager) Enroll(ctx context.Context, req EnrollRequest) (*store.Server,
 	host, _ := os.Hostname()
 	ectx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	res, err := agentclient.Enroll(ectx, req.Address, req.Port, req.Code, id.Cert, id.CertPEM, "NEXUS on "+host)
+	res, err := agentclient.EnrollVia(ectx, req.Dial, req.Address, req.Port, req.Code, id.Cert, id.CertPEM, "NEXUS on "+host)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +223,16 @@ func (m *Manager) Enroll(ctx context.Context, req EnrollRequest) (*store.Server,
 	if err := m.st.CreateServer(ctx, srv); err != nil {
 		return nil, err
 	}
-	_ = m.st.Audit(ctx, "operator", "server.enroll", srv.ID, map[string]any{"name": srv.Name, "address": net.JoinHostPort(srv.Address, fmt.Sprint(srv.Port)), "agent_id": srv.AgentID, "fingerprint": srv.AgentFingerprint, "agent_version": res.Response.AgentVersion})
+	connection := "direct"
+	if req.Tunnel != nil {
+		req.Tunnel.ServerID = srv.ID
+		if err := m.st.PutSSHTunnel(ctx, req.Tunnel); err != nil {
+			_ = m.st.DeleteServer(ctx, srv.ID)
+			return nil, fmt.Errorf("could not save the SSH tunnel: %w", err)
+		}
+		connection = "ssh-tunnel via " + req.Tunnel.User + "@" + net.JoinHostPort(req.Tunnel.Host, fmt.Sprint(req.Tunnel.Port))
+	}
+	_ = m.st.Audit(ctx, "operator", "server.enroll", srv.ID, map[string]any{"name": srv.Name, "address": net.JoinHostPort(srv.Address, fmt.Sprint(srv.Port)), "agent_id": srv.AgentID, "fingerprint": srv.AgentFingerprint, "agent_version": res.Response.AgentVersion, "connection": connection})
 	m.startWorker(srv)
 	m.bus.Publish("server.added", srv)
 	return srv, nil
@@ -223,6 +260,9 @@ func (m *Manager) Remove(ctx context.Context, id string, unenroll bool) error {
 	if err := m.st.DeleteServer(ctx, id); err != nil {
 		return err
 	}
+	if m.dialers != nil {
+		m.dialers.Forget(id)
+	}
 	detail := map[string]any{"name": srv.Name, "unenroll_requested": unenroll}
 	if unenrollErr != nil {
 		detail["unenroll_error"] = unenrollErr.Error()
@@ -240,6 +280,9 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	srv, err := m.st.GetServer(ctx, id)
 	if err != nil {
 		return err
+	}
+	if m.dialers != nil {
+		m.dialers.Forget(id) // reload the tunnel settings too
 	}
 	m.startWorker(srv)
 	return nil

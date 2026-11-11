@@ -21,6 +21,14 @@ against a real Linux host during development.
   wildcard that the first sudoers rule used, so the helper is now a separate
   root-owned binary named in sudoers without wildcards. Upgrading an older
   agent over SSH replaces the old rule (verified on Ubuntu 24.04).
+* SSH tunnel for agents behind firewalls: verified on Ubuntu 24.04 with ufw
+  dropping port 7443. Covered: automatic fallback during install, the agent
+  bound to 127.0.0.1 only, ufw untouched, and the restricted key unable to run
+  commands, get a shell or forward ports (`-L`, `-R` and `-W` each checked
+  against an unrestricted control key). Also covered: live telemetry and root
+  reads through the tunnel, recovery after a NEXUS restart and after the SSH
+  connection was killed, `AllowTcpForwarding no`, repair re-adding a deleted
+  key, and the direct path still chosen when the port is open.
 * The Windows executable (`NEXUS.exe`) cross-compiles cleanly but was **not
   run on Windows** here. The DPAPI, registry hardware detection, WebView2
   window and single-instance lock code paths have not been executed.

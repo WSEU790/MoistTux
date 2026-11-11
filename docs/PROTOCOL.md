@@ -75,3 +75,13 @@ patterns both before calling sudo and again inside the root process. Operations:
 `read-file` accepts only paths under `/var/log` and selected configuration
 directories. It refuses keys, shadow files and credential files, including
 when reached through a symlink.
+
+## Transport
+
+The agent speaks HTTPS with mutual TLS (pinned certificates) on its listen
+address, `:7443` by default. When the NEXUS PC cannot reach that port, the
+agent listens on `127.0.0.1:7443` and each TLS connection is carried by an
+SSH session whose forced command is `nexus-agent bridge 7443`, which pipes
+stdin/stdout to the local port (see `internal/core/tunnel`). The TLS
+handshake, pinning and every endpoint are identical over both transports.
+

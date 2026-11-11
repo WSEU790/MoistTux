@@ -30,7 +30,7 @@ maintenance.
 | **Desktop UI** | Command Center (customisable layout), Fleet, server workspace (overview with historical charts and nine operational tabs), AI Command Center, Incidents and Alerts, Approvals, interactive Topology, Policies editor, Memory, Activity and hash-chained Audit, and Settings. Four themes (Graphite, Midnight, Tactical, Light) plus custom accent and density. |
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
-| **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo, checks the firewall, and enrolls it. Agents can also be upgraded or repaired over SSH. The SSH login is not stored unless you tick *Remember this SSH login*; it is then encrypted with your Windows account (DPAPI) and can be forgotten at any time. Day-to-day monitoring never uses SSH. |
+| **SSH deployment** | Fleet → Add server → Install over SSH. NEXUS confirms the server's host key, signs in with a password or private key, uploads its built-in agent (SHA-256 verified), installs it with sudo and enrolls it. **Behind a firewall or NAT** (agent port blocked, as on most cloud servers), the default *Automatic* connection switches to an encrypted SSH tunnel: the agent listens on 127.0.0.1 only and NEXUS adds one restricted key to the SSH user's `authorized_keys` that can do nothing but connect to the agent (no shell, no port forwarding). No firewall change is needed. Agents can also be upgraded or repaired over SSH. The SSH login itself is not stored unless you tick *Remember this SSH login* (then it is encrypted with DPAPI and can be forgotten at any time). |
 | **Installer and updates** | Per-user Windows installer (no administrator rights) and signed self-update from GitHub Releases. See [Releases and updates](#releases-and-updates). |
 
 See [`docs/STATUS.md`](docs/STATUS.md) for phase-by-phase status against the
@@ -77,7 +77,10 @@ installer can be built on Linux or macOS. Local builds are versioned
 **Over SSH (recommended):** in NEXUS go to Fleet → Add server → Install over
 SSH. Enter the address, click *Check server identity*, confirm the host-key
 fingerprint, then enter an SSH user (root, or a user with sudo) and a password
-or private key. NEXUS does the rest.
+or private key. NEXUS does the rest. If the agent port (7443) is not reachable
+from your PC, NEXUS connects through SSH instead, so you do not need to open
+any port. Choose *Direct only* under *Connection to the agent* if you prefer
+to open the port yourself.
 
 **Manually:**
 

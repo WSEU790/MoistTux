@@ -407,16 +407,64 @@ Windows, so check UI changes there before a release when you can.
 
 ## 10. SSH deployment (Fleet → Add server → Install over SSH)
 
-`internal/core/deploy` connects with `golang.org/x/crypto/ssh`. The host key
-must match the fingerprint the operator confirmed, and NEXUS also checks
-`~/.ssh/known_hosts` (a mismatch is refused). It inspects the server
-(architecture, systemd, sudo). It uploads the embedded agent for that
-architecture and checks its SHA-256. It runs `sudo nexus-agent install` (the
-sudo password goes on stdin, never on a command line), checks that the agent
-port is reachable (fast failure plus *Retry enrollment* for firewalls), and
-enrolls with the agent's fingerprint pinned. *Upgrade/repair* reuses the same
-path. Saved SSH logins are opt-in and sealed with DPAPI in `ssh_credentials`
-(deleted with the server); the API never returns them.
+`internal/core/deploy` connects with `golang.org/x/crypto/ssh`:
+
+1. The host key must match the fingerprint the operator confirmed, and NEXUS
+   also checks `~/.ssh/known_hosts` (a mismatch is refused).
+2. It inspects the server: architecture, systemd, sudo, and the address the
+   server sees for this PC (`$SSH_CONNECTION`, which is what a firewall rule
+   would have to allow).
+3. It uploads the embedded agent for that architecture and checks its
+   SHA-256.
+4. It runs `sudo nexus-agent install`. The sudo password goes on stdin, never
+   on a command line.
+5. It chooses the connection (`Request.Connection`):
+   * `auto` (default): direct if this PC reaches the agent port; otherwise
+     the agent is reinstalled with `--listen 127.0.0.1:<port>` and NEXUS uses
+     an SSH tunnel.
+   * `ssh`: always the tunnel. `direct`: never (a blocked port then fails
+     with *Retry enrollment* and the corrected firewall hint).
+6. It enrolls with the agent's fingerprint pinned, directly or through the
+   tunnel.
+
+*Upgrade/repair* reuses the same path. For a tunneled server it keeps the
+agent on 127.0.0.1 and re-adds the tunnel key if it was removed. Saved SSH
+logins are opt-in and sealed with DPAPI in `ssh_credentials` (deleted with
+the server); the API never returns them.
+
+### SSH tunnel (`internal/core/tunnel`)
+
+For servers behind firewalls, cloud security groups or NAT. NEXUS generates
+an ED25519 key per server and adds one line to the SSH user's
+`~/.ssh/authorized_keys`. The line replaces an earlier line from the same
+NEXUS (matched by the `nexus-tunnel:<core fingerprint>` comment) and leaves
+every other line alone:
+
+```
+restrict,command="/usr/local/lib/nexus/nexus-agent bridge 7443" ssh-ed25519 AAAA… nexus-tunnel:20192bd48fa21a8c
+```
+
+* `restrict` disables local and remote port forwarding, PTYs, agent and X11
+  forwarding and `~/.ssh/rc`. The forced command replaces whatever the
+  client asks to run with `nexus-agent bridge 7443`
+  (`internal/agent/bridge.go`), which only pipes the session to
+  `127.0.0.1:7443`. Port forwarding is deliberately not used: in
+  `authorized_keys`, `port-forwarding` would re-enable remote (`-R`)
+  forwarding as well, and many hardened servers set `AllowTcpForwarding no`.
+* Each agent connection is one SSH session over a single kept-alive SSH
+  connection, which redials after drops (sleep, network change). The agent's
+  pinned mutual TLS runs inside, so the key alone grants nothing.
+* The private key is sealed with DPAPI in `ssh_tunnels` (migration v3,
+  deleted with the server). `GET /api/servers/{id}/ssh` returns the tunnel
+  settings, never the key.
+* Verified against OpenSSH 9.6 and Ubuntu 24.04 behind ufw dropping the agent
+  port. The key cannot run commands, open a shell, or forward locally,
+  remotely or with `-W`; it works with `AllowTcpForwarding no`, and survives
+  restarts and dropped connections. Unit tests use an in-process SSH server
+  (`tunnel_test.go`).
+* Removing a server from NEXUS leaves that one line in `authorized_keys`. It
+  can only reach an agent that no longer trusts this NEXUS; delete the line
+  marked `nexus-tunnel:` to tidy up.
 
 ## 11. CI, releases and self-update
 
@@ -487,6 +535,7 @@ Authenticode certificate yet), so SmartScreen warns on first install.
 | `/var/lib/nexus-agent/` | agent identity, enrolled cores, pending codes (0700, user `nexus`) |
 | `/etc/sudoers.d/nexus-agent` | `nexus ALL=(root) NOPASSWD: /usr/local/lib/nexus/nexus-helper` |
 | `/etc/systemd/system/nexus-agent.service` | hardened unit (resource limits, protections) |
+| `~<ssh user>/.ssh/authorized_keys` | only for tunneled servers: one `restrict,command="… bridge 7443"` line marked `nexus-tunnel:` |
 
 Ports: agent 7443 (HTTPS, mTLS); dev core 7780; vite 5173; Ollama 11434.
 
@@ -501,6 +550,8 @@ Ports: agent 7443 (HTTPS, mTLS); dev core 7780; vite 5173; Ollama 11434.
 | Windows build lacks an icon | `make windows` runs `cmd/nexus-winres` first; a plain `go build` skips the `.syso` |
 | Update never offered on a local build | expected: `-dev` builds and builds without `update.PublicKey` never update |
 | CI release job fails "Add the NEXUS_UPDATE_SIGNING_KEY…" | add the repository secret (Settings → Secrets and variables → Actions) |
+| Install over SSH: "port 7443 is not reachable from this PC" with *Direct only* | expected behind firewalls; use *Automatic* (SSH tunnel) or open the port for the address the server sees (shown in the hint) |
+| SSH tunnel setup fails: "unable to authenticate" | sshd does not accept public keys for that user (`PubkeyAuthentication no`, or a non-default `AuthorizedKeysFile`), or a `ForceCommand` overrides the key's command |
 | Agent reports Docker unavailable: permission denied | the `nexus` user is not in the `docker` group; install with `--docker` (root-equivalent, so a deliberate choice) |
 
 ## 14. Conventions

@@ -32,6 +32,7 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
     group: "",
     tags: "",
     remember: false,
+    connection: "auto" as "auto" | "ssh" | "direct",
   });
   const [saved, setSaved] = useState<Saved | null>(null);
   const [useOther, setUseOther] = useState(false);
@@ -114,6 +115,7 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
         group: f.group.trim(),
         tags: f.tags.split(/[,\s]+/).filter(Boolean),
         remember: f.remember,
+        connection: f.connection,
       });
       setJob(j);
     } catch (e: any) {
@@ -235,11 +237,28 @@ export function SSHDeploy({ mode, server, onDone, onClose }: { mode: "install" |
           </div>
         </details>
       )}
+      {mode === "install" && (
+        <>
+          <label className="field">
+            <span>Connection to the agent</span>
+            <select className="select" value={f.connection} onChange={(e) => set("connection", e.target.value)} disabled={!scan}>
+              <option value="auto">Automatic: direct, or through SSH if port {f.agent_port} is blocked (recommended)</option>
+              <option value="ssh">Always through SSH (the agent port is never exposed)</option>
+              <option value="direct">Direct only (port {f.agent_port} must be open to this PC)</option>
+            </select>
+          </label>
+          {f.connection !== "direct" && (
+            <Notice icon="key">
+              When NEXUS connects through SSH, it adds one restricted key to <span className="mono">{f.user.trim() || "the SSH user"}</span>'s <span className="mono">~/.ssh/authorized_keys</span>. That key can do one thing only: connect NEXUS to the agent on <span className="mono">127.0.0.1:{f.agent_port}</span> (no shell, no other commands, no port forwarding). The agent then listens on 127.0.0.1 only, so no firewall change is needed and the agent port is never exposed. Choose "Direct only" if you don't want this.
+            </Notice>
+          )}
+        </>
+      )}
       <label className="check" style={{ alignItems: "flex-start" }}>
         <input type="checkbox" checked={f.remember} onChange={(e) => set("remember", e.target.checked)} style={{ marginTop: 3 }} />
         <span>
           Remember this SSH login on this PC
-          <div className="faint" style={{ fontSize: 12 }}>Encrypted with your Windows account (DPAPI) and used only when you choose to upgrade or repair the agent. Day-to-day monitoring never needs SSH. You can forget it any time in the server's settings.</div>
+          <div className="faint" style={{ fontSize: 12 }}>Encrypted with your Windows account (DPAPI) and used only when you choose to upgrade or repair the agent. Monitoring never uses this login (an SSH tunnel has its own restricted key). You can forget it any time in the server's settings.</div>
         </span>
       </label>
       <Notice icon="lock">{f.remember ? "Your SSH login will be saved encrypted after it works." : "Your SSH login is used once for this installation and is not saved."} NEXUS uploads its built-in agent, verifies its checksum, installs it as a least-privilege service, and then talks to it only through its pinned certificate.</Notice>

@@ -292,6 +292,19 @@ var migrations = []string{
 		created_at INTEGER NOT NULL,
 		last_used_at INTEGER
 	)`,
+
+	// v3 — agents reached through an SSH tunnel (tunnel-only key, sealed)
+	`CREATE TABLE ssh_tunnels (
+		server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		user TEXT NOT NULL,
+		host_key TEXT NOT NULL,
+		agent_port INTEGER NOT NULL,
+		authorized_key TEXT NOT NULL,
+		sealed_key TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
