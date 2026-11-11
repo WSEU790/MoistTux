@@ -30,6 +30,11 @@ Usage:
 }
 
 func main() {
+	// Started as /usr/local/lib/nexus/nexus-helper (normally through sudo):
+	// run the validated privileged helper and nothing else.
+	if agent.IsHelperExecutable() {
+		os.Exit(agent.HelperMain(os.Args[1:]))
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)

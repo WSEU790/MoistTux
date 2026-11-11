@@ -14,6 +14,13 @@ against a real Linux host during development.
   assessment, journald queries, and a service restart through the helper
   (confirmed by the main PID changing). Not yet tried on Debian or other
   distributions.
+* Ubuntu 26.04 LTS (systemd 259, sudo-rs 0.2.13 as the default `sudo`):
+  install over SSH as a sudo user with a password, privileged reads through
+  the helper, `apt-get update` through the helper, the full end-to-end suite
+  as a non-root sudo user, and `uninstall`. sudo-rs rejects the argument
+  wildcard that the first sudoers rule used, so the helper is now a separate
+  root-owned binary named in sudoers without wildcards. Upgrading an older
+  agent over SSH replaces the old rule (verified on Ubuntu 24.04).
 * The Windows executable (`NEXUS.exe`) cross-compiles cleanly but was **not
   run on Windows** here. The DPAPI, registry hardware detection, WebView2
   window and single-instance lock code paths have not been executed.

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -108,6 +109,13 @@ func (c *core) do(method, path string, body, out any) (int, string) {
 
 func eventually(t *testing.T, d time.Duration, what string, f func() bool) {
 	t.Helper()
+	eventuallyOr(t, d, what, f, nil)
+}
+
+// eventuallyOr is eventually with a description of the state on timeout, so
+// a CI failure says where things stopped instead of only that they did.
+func eventuallyOr(t *testing.T, d time.Duration, what string, f func() bool, state func() string) {
+	t.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if f() {
@@ -115,7 +123,30 @@ func eventually(t *testing.T, d time.Duration, what string, f func() bool) {
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+	if state != nil {
+		t.Fatalf("timed out waiting for %s; state: %s", what, state())
+	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// probeSudo reports how the privileged helper behaves through sudo for a
+// non-root test run: how long `sudo -n <test binary> helper ping` takes and
+// what it prints, which separates sudo problems from slow operations.
+func probeSudo(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	ver, _ := exec.Command("sudo", "--version").CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, "sudo", "-n", self, "helper", "ping")
+	var so, se bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &so, &se
+	err = cmd.Run()
+	first, _, _ := strings.Cut(string(ver), "\n")
+	t.Logf("sudo probe: %s; helper ping took %s, err=%v, stdout=%q, stderr=%.200q", first, time.Since(start).Round(time.Millisecond), err, strings.TrimSpace(so.String()), se.String())
 }
 
 // ---------------------------------------------------------------- fake Ollama (test fixture)
@@ -187,7 +218,8 @@ func (f *fakeOllama) lastRequest() map[string]any {
 
 func TestEndToEnd(t *testing.T) {
 	if os.Geteuid() != 0 {
-		t.Log("not root: privileged helper calls will report sudo errors (expected)")
+		t.Log("not root: privileged helper calls go through sudo -n and fail where it needs a password (expected)")
+		probeSudo(t)
 	}
 	agentDir := t.TempDir()
 	ag := startAgent(t, agentDir, 0)
@@ -294,6 +326,11 @@ func TestEndToEnd(t *testing.T) {
 	t.Run("DockerInventoryWhenAvailable", func(t *testing.T) {
 		if _, err := os.Stat("/var/run/docker.sock"); err != nil {
 			t.Skip("no Docker engine on this host")
+		}
+		if conn, err := net.Dial("unix", "/var/run/docker.sock"); err != nil {
+			t.Skipf("the Docker socket is not usable by this user (%v); the agent reports that as unavailable", err)
+		} else {
+			conn.Close()
 		}
 		var info map[string]any
 		c.do("GET", "/api/servers/"+srvID+"/agent/docker", nil, &info)
@@ -436,10 +473,37 @@ func TestEndToEnd(t *testing.T) {
 		if st, _ := c.do("POST", "/api/approvals/"+ap["id"].(string)+"/decide", map[string]any{"approve": false}, nil); st == 200 {
 			t.Fatal("approval decided twice")
 		}
-		eventually(t, 3*time.Minute, "execution after approval and resumed answer", func() bool {
+		// apt-get update talks to the host's real repositories, which can be
+		// slow on CI runners. The operation is bounded by the tool timeout
+		// (11 min); either outcome must reach the conversation.
+		state := func() string {
+			msgs, exes := thread(id)
+			var b strings.Builder
+			for _, e := range exes {
+				fmt.Fprintf(&b, "execution %v status=%v decision=%v error=%v; ", e["tool"], e["status"], e["decision"], e["error"])
+			}
+			for i := max(0, len(msgs)-4); i < len(msgs); i++ {
+				fmt.Fprintf(&b, "[%v] %.160v; ", msgs[i]["role"], msgs[i]["content"])
+			}
+			out, _ := exec.Command("ps", "-eo", "pid,etime,args", "--forest").Output()
+			for _, l := range strings.Split(string(out), "\n") {
+				if strings.Contains(l, "helper") || strings.Contains(l, "apt") || strings.Contains(l, "sudo") {
+					fmt.Fprintf(&b, "\n  ps: %.200s", l)
+				}
+			}
+			return b.String()
+		}
+		approvedAt, slowLogged := time.Now(), false
+		eventuallyOr(t, 12*time.Minute, "execution after approval and resumed answer", func() bool {
 			_, exes := thread(id)
-			return len(exes) == 1 && (exes[0]["status"] == "succeeded" || exes[0]["status"] == "failed") && strings.Contains(finalAnswer(id), "refresh_package_lists")
-		})
+			done := len(exes) == 1 && (exes[0]["status"] == "succeeded" || exes[0]["status"] == "failed") && strings.Contains(finalAnswer(id), "refresh_package_lists")
+			if !done && !slowLogged && time.Since(approvedAt) > 90*time.Second {
+				slowLogged = true
+				t.Logf("approved operation still running after 90s: %s", state())
+			}
+			return done
+		}, state)
+		t.Logf("approved operation and resumed answer took %s", time.Since(approvedAt).Round(time.Millisecond))
 		_, exes := thread(id)
 		res, _ := json.Marshal(exes[0]["result"])
 		t.Logf("approved operation finished with status %v: %.300s", exes[0]["status"], res)

@@ -15,12 +15,17 @@ import (
 )
 
 const (
-	InstallBin     = "/usr/local/lib/nexus/nexus-agent"
-	DefaultState   = "/var/lib/nexus-agent"
-	UnitPath       = "/etc/systemd/system/nexus-agent.service"
-	SudoersPath    = "/etc/sudoers.d/nexus-agent"
-	ServiceUser    = "nexus"
-	DefaultListen  = ":7443"
+	InstallBin = "/usr/local/lib/nexus/nexus-agent"
+	// HelperBin is the same program under a name that only ever runs the
+	// validated privileged helper (see IsHelperExecutable). sudoers allows
+	// this one path with no argument wildcard, which both the classic sudo
+	// and sudo-rs (the default sudo from Ubuntu 25.10) accept.
+	HelperBin     = "/usr/local/lib/nexus/nexus-helper"
+	DefaultState  = "/var/lib/nexus-agent"
+	UnitPath      = "/etc/systemd/system/nexus-agent.service"
+	SudoersPath   = "/etc/sudoers.d/nexus-agent"
+	ServiceUser   = "nexus"
+	DefaultListen = ":7443"
 )
 
 type InstallOptions struct {
@@ -65,6 +70,10 @@ func Install(opts InstallOptions) error {
 	}
 	_ = os.Chown(InstallBin, 0, 0)
 	step(out, "binary installed at %s (root:root 0755)", InstallBin)
+	if err := installHelper(); err != nil {
+		return fmt.Errorf("install helper: %w", err)
+	}
+	step(out, "privileged helper at %s (root:root 0755)", HelperBin)
 
 	// 2. Service user.
 	if _, err := user.Lookup(ServiceUser); err != nil {
@@ -109,8 +118,9 @@ func Install(opts InstallOptions) error {
 	_ = os.Chmod(DefaultState, 0o700)
 	step(out, "state directory %s (0700, %s)", DefaultState, ServiceUser)
 
-	// 4. Sudoers: exactly one command, the helper of the root-owned binary.
-	sudoers := fmt.Sprintf("# Managed by nexus-agent. Allows only the validated privileged helper.\nDefaults:%s !requiretty\n%s ALL=(root) NOPASSWD: %s helper *\n", ServiceUser, ServiceUser, InstallBin)
+	// 4. Sudoers: exactly one command, the root-owned helper, which accepts
+	// only allowlisted operations and re-validates every argument.
+	sudoers := SudoersRule()
 	tmp := SudoersPath + ".tmp"
 	if err := os.WriteFile(tmp, []byte(sudoers), 0o440); err != nil {
 		return err
@@ -223,8 +233,10 @@ func Uninstall(out io.Writer, purge bool) error {
 		}
 	}
 	runCmd(ctx, time.Minute, nil, "systemctl", "daemon-reload")
-	if err := os.Remove(InstallBin); err == nil {
-		step(out, "removed %s", InstallBin)
+	for _, p := range []string{HelperBin, InstallBin} {
+		if err := os.Remove(p); err == nil {
+			step(out, "removed %s", p)
+		}
 	}
 	_ = os.Remove(filepath.Dir(InstallBin))
 	if purge {
@@ -238,6 +250,30 @@ func Uninstall(out io.Writer, purge bool) error {
 		step(out, "kept %s; re-installing will reuse the same identity (use --purge to remove)", DefaultState)
 	}
 	return nil
+}
+
+// SudoersRule is the complete sudoers file the installer writes. It has no
+// Defaults lines and no argument wildcards: sudo-rs rejects both.
+func SudoersRule() string {
+	return fmt.Sprintf("# Managed by nexus-agent. Allows only the validated privileged helper.\n%s ALL=(root) NOPASSWD: %s\n", ServiceUser, HelperBin)
+}
+
+// installHelper puts the helper next to the installed binary as a hard link
+// (no extra disk space), or a copy where links are not possible. Both are
+// replaced atomically, so an upgrade never leaves a stale helper behind.
+func installHelper() error {
+	tmp := HelperBin + ".new"
+	_ = os.Remove(tmp)
+	if err := os.Link(InstallBin, tmp); err == nil {
+		if err := os.Rename(tmp, HelperBin); err != nil {
+			os.Remove(tmp)
+			return err
+		}
+	} else if err := copyFile(InstallBin, HelperBin, 0o755); err != nil {
+		return err
+	}
+	_ = os.Chown(HelperBin, 0, 0)
+	return os.Chmod(HelperBin, 0o755)
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

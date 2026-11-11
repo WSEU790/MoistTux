@@ -73,7 +73,7 @@ func New(cfg Config) (*Agent, error) {
 		return nil, err
 	}
 	h := collect.Default()
-	priv := &Privileged{Self: self, IsRoot: os.Geteuid() == 0}
+	priv := NewPrivileged(self)
 	a := &Agent{
 		cfg: cfg, state: st, host: h, log: cfg.Logger,
 		sampler: NewSampler(h, cfg.Interval, int((20*time.Minute)/cfg.Interval)),

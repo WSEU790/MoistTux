@@ -52,10 +52,21 @@ as `after`, so the core can verify the outcome.
 
 ## Privileged helper
 
-`nexus-agent helper <op> [args]` is the only way the agent gains root. sudoers
-permits only this binary, which is root-owned. The helper validates arguments
-against fixed patterns both before calling sudo and again inside the root
-process. Operations: `ping`, `systemctl <verb> <unit>`, `apt-update`,
+The privileged helper is the only way the agent gains root. `install` places
+it at `/usr/local/lib/nexus/nexus-helper`, a root-owned hard link to the agent
+binary that, under that name, runs nothing but the helper. The agent calls
+`sudo -n /usr/local/lib/nexus/nexus-helper <op> [args]`, and the sudoers rule
+is a single line with no `Defaults` and no argument wildcards:
+
+```
+nexus ALL=(root) NOPASSWD: /usr/local/lib/nexus/nexus-helper
+```
+
+The classic sudo and sudo-rs (the default `sudo` from Ubuntu 25.10) both
+accept this rule; sudo-rs rejects argument wildcards such as `helper *`. Agents
+installed before this change keep working through `nexus-agent helper <op>`
+until they are upgraded. The helper validates arguments against fixed
+patterns both before calling sudo and again inside the root process. Operations: `ping`, `systemctl <verb> <unit>`, `apt-update`,
 `apt-upgrade all|security|packages <names…>`, `ufw-status`, `nft-list`,
 `iptables-save`, `sshd-config`, `fail2ban-status [jail]`,
 `read-file <path> <max>`, `sockets`, `du <path> <depth>`,

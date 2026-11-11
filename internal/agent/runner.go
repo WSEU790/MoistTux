@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -95,8 +96,39 @@ type helperEnvelope struct {
 // `sudo -n` against the agent binary, which sudoers permits for this purpose only.
 type Privileged struct {
 	Self    string // absolute path of the agent binary
+	Helper  string // dedicated helper binary (HelperBin) when installed
 	IsRoot  bool
 	Timeout time.Duration
+}
+
+// NewPrivileged prefers the dedicated helper installed next to the agent and
+// falls back to `<agent> helper`, which older sudoers rules allowed.
+func NewPrivileged(self string) *Privileged {
+	p := &Privileged{Self: self, IsRoot: os.Geteuid() == 0}
+	h := filepath.Join(filepath.Dir(self), filepath.Base(HelperBin))
+	if fi, err := os.Stat(h); err == nil && fi.Mode().IsRegular() && h != self {
+		p.Helper = h
+	}
+	return p
+}
+
+// IsHelperExecutable reports whether this process was started as the
+// dedicated helper. That binary does nothing but run HelperMain, so the
+// sudoers rule for it can allow any arguments without allowing `install`,
+// `run` or any other subcommand as root.
+func IsHelperExecutable() bool {
+	exe, err := os.Executable()
+	return err == nil && filepath.Base(exe) == filepath.Base(HelperBin)
+}
+
+// sudoDenied matches the refusal messages of the classic sudo and sudo-rs.
+func sudoDenied(msg string) bool {
+	for _, s := range []string{"a password is required", "not allowed", "I'm afraid I can't do that", "authentication failed", "interactive authentication is required", "not in the sudoers file"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Privileged) Do(ctx context.Context, timeout time.Duration, out any, op string, args ...string) error {
@@ -114,11 +146,15 @@ func (p *Privileged) Do(ctx context.Context, timeout time.Duration, out any, op 
 			return err
 		}
 	} else {
-		r := runCmd(ctx, timeout, nil, "sudo", append([]string{"-n", p.Self, "helper", op}, args...)...)
+		argv := append([]string{"-n", p.Self, "helper", op}, args...)
+		if p.Helper != "" {
+			argv = append([]string{"-n", p.Helper, op}, args...)
+		}
+		r := runCmd(ctx, timeout, nil, "sudo", argv...)
 		var env helperEnvelope
 		if err := json.Unmarshal([]byte(strings.TrimSpace(r.Stdout)), &env); err != nil {
 			msg := strings.TrimSpace(r.Stderr)
-			if strings.Contains(msg, "a password is required") || strings.Contains(msg, "not allowed") {
+			if sudoDenied(msg) {
 				return fmt.Errorf("privileged helper not authorised by sudoers (re-run `nexus-agent install` as root): %s", msg)
 			}
 			return fmt.Errorf("privileged helper failed (exit %d): %s", r.ExitCode, firstLine(msg))
