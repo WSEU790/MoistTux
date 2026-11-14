@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"io"
 	"io/fs"
 	"log"
@@ -31,25 +32,26 @@ import (
 )
 
 type Server struct {
-	Store    *store.Store
-	Bus      *events.Bus
-	Fleet    *fleet.Manager
-	Monitor  *monitor.Engine
-	Notifier *notify.Notifier
-	Deploy   *deploy.Manager
-	Update   *update.Updater
+	Knowledge   *knowledge.Library
+	Store       *store.Store
+	Bus         *events.Bus
+	Fleet       *fleet.Manager
+	Monitor     *monitor.Engine
+	Notifier    *notify.Notifier
+	Deploy      *deploy.Manager
+	Update      *update.Updater
 	ApplyUpdate func() error
-	AI       *ai.Engine
-	Registry *ai.Registry
-	Policies *ai.PolicyStore
-	Identity func() *identity.Identity
-	Log      *log.Logger
-	UI       fs.FS
-	Token    string
-	Version  string
-	DataDir  string
-	Started  time.Time
-	DevOrigin string // e.g. http://localhost:5173 during UI development
+	AI          *ai.Engine
+	Registry    *ai.Registry
+	Policies    *ai.PolicyStore
+	Identity    func() *identity.Identity
+	Log         *log.Logger
+	UI          fs.FS
+	Token       string
+	Version     string
+	DataDir     string
+	Started     time.Time
+	DevOrigin   string // e.g. http://localhost:5173 during UI development
 
 	allowedHosts map[string]bool
 }

@@ -4,6 +4,11 @@ package fleet
 
 import (
 	"context"
+	"crypto/ecdsa"
+	crand "crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -79,6 +84,39 @@ func (m *Manager) SetDialers(d Dialers) { m.mu.Lock(); m.dialers = d; m.mu.Unloc
 
 // CoreFingerprint identifies this NEXUS installation (its certificate).
 func (m *Manager) CoreFingerprint() string { return m.ident().Fingerprint }
+
+// CoreSignerKey is this installation's public key (base64 PKIX), which
+// `nexus-agent install --shell-signer` trusts for approved shell commands.
+func (m *Manager) CoreSignerKey() (string, error) {
+	c := m.ident().Cert
+	if len(c.Certificate) == 0 {
+		return "", errors.New("core identity has no certificate")
+	}
+	leaf, err := x509.ParseCertificate(c.Certificate[0])
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(der), nil
+}
+
+// SignGrant signs a shell grant (ECDSA P-256, SHA-256, ASN.1) with the core's
+// identity key. Callers sign only commands a person approved.
+func (m *Manager) SignGrant(raw []byte) (string, error) {
+	k, ok := m.ident().Cert.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return "", errors.New("core identity key is not ECDSA")
+	}
+	sum := sha256.Sum256(raw)
+	sig, err := ecdsa.SignASN1(crand.Reader, k, sum[:])
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
 
 func (m *Manager) SetConfig(cfg Config) {
 	m.mu.Lock()

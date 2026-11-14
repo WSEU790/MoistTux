@@ -23,9 +23,12 @@ NEXUS is a Windows desktop app that monitors and operates Linux servers.
 * **`NEXUS.exe`** is the core plus the React UI in a WebView2 window, built
   as one executable. `nexus-core` is the same core without a window, used for
   development on Linux or macOS and for tests.
-* **The AI** never runs shell commands. It can only call 41 typed tools, and
-  every call passes a policy engine; changes need approval, show an impact
-  preview first, and are verified afterwards.
+* **The AI** acts through 46 typed tools, a catalog of 111 vetted
+  administration commands (`run_admin_command`), and, as a last resort,
+  shell commands that a person approves one by one (`run_shell_command`).
+  Every call passes a policy engine; changes need approval per policy, show
+  an impact preview first, and are verified afterwards. It consults a
+  built-in library of 24 Linux runbooks (`search_knowledge`).
 
 ```
 NEXUS.exe (Windows)                                      Linux server
@@ -49,10 +52,15 @@ that breaks any of them.
 1. **No fake data.** Never fabricate telemetry, fill gaps with invented
    numbers or ship mock-ups. If something is unavailable, say so in the UI
    ("unavailable: …", with the reason).
-2. **No unrestricted execution.** There is no "run this command" path
-   anywhere, for the AI or for people. Every operation is a typed tool with
-   validated arguments, and root operations go through the helper allowlist,
-   which validates again inside the root process.
+2. **No unapproved free-form execution.** Operations are typed tools or
+   catalog commands (`internal/protocol/catalog.go`) with validated arguments,
+   and root operations go through the helper allowlist, which validates again
+   inside the root process. The single exception is `run_shell_command`: a
+   person approves each command, NEXUS signs exactly that command for that
+   server, and the root helper refuses anything without a valid signature
+   from a key in the root-owned `/etc/nexus-agent/shell-signers`. Never add
+   another path that runs strings, and never let shell commands run without
+   approval (not even in autonomous mode).
 3. **Secrets are never plaintext at rest and never sent to the model.**
    Secrets are sealed with DPAPI on Windows (an AES-GCM key file elsewhere).
    SSH passwords are kept only if the user opts in. Tool results must not
@@ -299,6 +307,61 @@ r.Add(&Tool{
   back to the model and never reach the agent; `integration` tests this.
 * Add policy tests in `ai/policy_test.go` for any new decision logic.
 
+### Add a catalog command
+
+Most new server operations should be catalog entries, not new tools. Add an
+entry to `Catalog` in `internal/protocol/catalog.go`:
+
+```go
+{ID: "nginx_reopen_logs", Category: "web", Description: "Make nginx reopen its log files (nginx -s reopen).",
+    Argv: []string{"nginx", "-s", "reopen"}, Root: true, Risk: "low", TimeoutSec: 30},
+```
+
+* `Argv` is a fixed template: literal tokens, `{name}` inside a token, or a
+  whole `{name...}` token for lists. Values are validated by the parameter's
+  `Kind` (`package`, `unit`, `host`, `abspath`, `port`, `cidr`, …) and can
+  never start with `-`, so they cannot become options.
+* `Risk` decides the policy path (read runs freely; high always needs
+  approval). Set `Warning` for anything that can lock users out or lose data.
+* NEXUS, the agent and the root helper all validate with the same entry.
+  `TestEveryCatalogCommandBuilds` checks every entry; add injection cases to
+  `TestCatalogRejectsInjection` for new kinds.
+* Mention the command in the relevant runbook's "In NEXUS:" line
+  (`TestRunbooksReferenceRealTools` checks those names).
+
+### Approved shell commands (how the signature works)
+
+`run_shell_command` (`internal/core/ai/commands.go`):
+
+1. `Check` refuses blocked patterns (`protocol.ShellBlocked`).
+2. `Decide` always routes it to approval and denies it when the policy has
+   `shell_disabled`.
+3. `Preview` lists warnings (`protocol.ShellWarnings`). Commands with
+   warnings also need the server name typed.
+4. After approval, `Exec` (which refuses unless `env.HumanApproved`) builds a
+   `protocol.ShellGrant` {machine-id, command, nonce, 2-minute expiry} and
+   signs it with the core's ECDSA identity key.
+5. On the server, the root helper (`internal/agent/shell.go`) verifies:
+   * the signature against `/etc/nexus-agent/shell-signers`, which must be
+     root-owned and written by `nexus-agent install --shell-signer`, which
+     NEXUS passes when it installs or repairs over SSH;
+   * the machine-id, the expiry and the block list;
+   * the nonce, recorded in `/var/lib/nexus-helper`, which makes each grant
+     single-use.
+
+   Only then does it run `sh -c` as root with a time limit.
+
+The agent's own state directory is writable by the `nexus` account, so the
+trust anchor must never be read from there.
+
+### Add a runbook
+
+Add a Markdown file to `internal/core/knowledge/docs/`: `# Title`, a
+`> summary` line, a `Tags:` line, then `## ` sections (the search unit).
+Include an "In NEXUS:" line naming the tools and catalog commands that apply.
+Add a query to `TestSearchFindsTheRightRunbook`. Keep runbooks factual and
+safety-first (test before reload, keep SSH access, back up first).
+
 ### Add a privileged (root) operation
 
 Only if there is no unprivileged way. In `internal/agent/helper.go`:
@@ -352,9 +415,12 @@ make test-race            # race detector
 go test ./internal/integration -run TestEndToEnd -v     # the big one, with logs
 ```
 
-* **Unit tests** sit next to the code: `pki`, `agent` (sudoers rule, helper),
-  `agent/collect`, `ai` (policy), `monitor`, `deploy` (saved logins),
-  `update` (signature and downgrade rejection, tampering).
+* **Unit tests** sit next to the code: `pki`; `agent` (sudoers rule, helper,
+  shell grant signatures, expiry, machine binding and replay); `protocol`
+  (every catalog command, argument injection, shell block and warning
+  rules); `agent/collect`; `ai` (policy, command tools, runbook references);
+  `knowledge` (parsing, search quality); `tunnel`; `monitor`; `deploy`
+  (saved logins); `update` (signature and downgrade rejection, tampering).
 * **`internal/integration/e2e_test.go`** starts a real agent and a real core
   in one process and drives the HTTP API. It covers enrollment, mTLS
   rejection, telemetry, Docker, AI tool calls through a scripted Ollama,

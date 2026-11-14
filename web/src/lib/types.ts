@@ -348,6 +348,7 @@ export interface Policy {
   monitoring_level: string;
   auto_investigate: boolean;
   allow_reboot: boolean;
+  shell_disabled?: boolean;
 }
 
 export interface Memory {

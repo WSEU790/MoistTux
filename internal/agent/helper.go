@@ -19,8 +19,11 @@ import (
 )
 
 // The privileged helper is the ONLY path by which the agent gains root. It
-// accepts a closed set of operations, each with strictly validated arguments.
-// There is deliberately no operation that runs an arbitrary command or shell.
+// accepts a closed set of operations, each with strictly validated arguments,
+// including the commands of the shared catalog (internal/protocol). The one
+// operation that runs a shell command, "shell", requires a grant signed by a
+// NEXUS core whose key is listed in a root-owned file (see shell.go), so the
+// agent's own service account can never run arbitrary commands as root.
 
 var (
 	reUnit    = regexp.MustCompile(`^[A-Za-z0-9@._:\\-]{1,200}\.(service|socket|timer|target|path|mount)$`)
@@ -110,6 +113,14 @@ func ValidateHelperArgs(op string, args []string) error {
 		if n, err := strconv.Atoi(args[2]); err != nil || n <= 0 || n > 500 {
 			return helperUsage(op)
 		}
+	case "catalog":
+		if _, _, err := validateCatalogHelper(args); err != nil {
+			return err
+		}
+	case "shell":
+		if len(args) != 2 || len(args[0]) > 64<<10 || len(args[1]) > 1024 {
+			return helperUsage(op)
+		}
 	default:
 		return fmt.Errorf("helper: unknown operation %q", op)
 	}
@@ -164,6 +175,14 @@ func ExecHelper(ctx context.Context, op string, args []string) (any, error) {
 	switch op {
 	case "ping":
 		return "pong", nil
+	case "catalog":
+		c, argv, err := validateCatalogHelper(args)
+		if err != nil {
+			return nil, err
+		}
+		return runCmd(ctx, time.Duration(c.TimeoutSec)*time.Second, c.Env, argv[0], argv[1:]...), nil
+	case "shell":
+		return execShellGrant(ctx, args[0], args[1])
 	case "systemctl":
 		return runCmd(ctx, 2*time.Minute, nil, "systemctl", "--no-ask-password", args[0], args[1]), nil
 	case "apt-update":

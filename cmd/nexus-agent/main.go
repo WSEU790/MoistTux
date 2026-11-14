@@ -19,7 +19,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `nexus-agent %s — NEXUS infrastructure agent
 
 Usage:
-  nexus-agent install [--listen :7443] [--docker] [--interval 5s]   install as a systemd service (root)
+  nexus-agent install [--listen :7443] [--docker] [--interval 5s] [--shell-signer KEY]
+                                                                    install as a systemd service (root)
   nexus-agent enroll-code [--state-dir DIR]                         issue a new single-use enrollment code
   nexus-agent clients [--state-dir DIR]                             list enrolled NEXUS cores
   nexus-agent revoke --all [--state-dir DIR]                        revoke every enrolled core
@@ -74,9 +75,11 @@ func main() {
 		fs := flag.NewFlagSet("install", flag.ExitOnError)
 		listen := fs.String("listen", agent.DefaultListen, "address to listen on")
 		docker := fs.Bool("docker", false, "grant Docker access (adds the service user to the docker group, which is root-equivalent)")
+		signer := fs.String("shell-signer", "", "base64 public key of a NEXUS installation allowed to run person-approved shell commands")
+		signerLabel := fs.String("shell-signer-label", "nexus", "label for --shell-signer")
 		interval := fs.Duration("interval", 5*time.Second, "telemetry sampling interval")
 		_ = fs.Parse(args)
-		if err := agent.Install(agent.InstallOptions{Listen: *listen, Docker: *docker, Interval: *interval, Out: os.Stdout}); err != nil {
+		if err := agent.Install(agent.InstallOptions{Listen: *listen, Docker: *docker, Interval: *interval, Out: os.Stdout, ShellSigner: *signer, ShellSignerLabel: *signerLabel}); err != nil {
 			fatal(err)
 		}
 	case "enroll-code":

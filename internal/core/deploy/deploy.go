@@ -715,6 +715,13 @@ func (m *Manager) run(j *Job, req Request) {
 		if req.Docker {
 			c += " --docker"
 		}
+		// Trust this NEXUS for person-approved shell commands (verified by the
+		// root helper; the key is public, so it may appear on a command line).
+		if key, err := m.fleet.CoreSignerKey(); err == nil {
+			host, _ := os.Hostname()
+			label := "nexus@" + regexp.MustCompile(`[^A-Za-z0-9._-]`).ReplaceAllString(host, "_")
+			c += " --shell-signer " + key + " --shell-signer-label " + label
+		}
 		return c
 	}
 	loopback := existing != nil || (req.Mode == "install" && req.Connection == "ssh")

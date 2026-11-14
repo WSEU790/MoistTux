@@ -19,6 +19,10 @@ type Env struct {
 	Server *store.Server
 	Client *agentclient.Client
 	Deps   *Deps
+	// HumanApproved is set only when a person approved this execution (an
+	// approval decision, or the operator acting in the UI). Tools that must
+	// never run on the model's say-so alone check it.
+	HumanApproved bool
 }
 
 // Impact is the preview shown to an operator before approving a change.
@@ -29,6 +33,9 @@ type Impact struct {
 	Rollback string   `json:"rollback"`
 	Evidence any      `json:"evidence,omitempty"`
 	Confirm  string   `json:"confirm,omitempty"` // text the operator must type (high risk)
+	// NoConfirm skips the typed confirmation for a high-risk preview whose
+	// approval click is enough (the command is shown in full).
+	NoConfirm bool `json:"-"`
 }
 
 // Param is one JSON-schema property with validation rules.
@@ -51,14 +58,29 @@ type Tool struct {
 	Risk        Risk
 	Timeout     time.Duration
 	Fleet       bool   // operates on NEXUS data, not on a specific server
+	Shell       bool   // runs a person-approved shell command (policy switch, always approval)
 	Internal    bool   // changes only NEXUS state (e.g. memory), audited but not gated
 	Capability  string // required agent capability, if any
 	Exec        func(ctx context.Context, env *Env, args map[string]any) (any, error)
+	// RiskFor gives the risk of one call when it depends on the arguments
+	// (one tool fronting commands of different risk); nil means Risk.
+	RiskFor func(args map[string]any) Risk
+	// Check validates arguments beyond their types, before any policy or
+	// approval step, so mistakes go straight back to the model.
+	Check func(args map[string]any) error
 	Preview     func(ctx context.Context, env *Env, args map[string]any) (*Impact, error)
 	Describe    func(args map[string]any) string
 }
 
 func fptr(v float64) *float64 { return &v }
+
+// RiskOf is the risk of a call with these arguments.
+func (t *Tool) RiskOf(args map[string]any) Risk {
+	if t.RiskFor != nil {
+		return t.RiskFor(args)
+	}
+	return t.Risk
+}
 
 // Schema returns the JSON schema exposed to the model. A "server" property is
 // added to every server-scoped tool.
@@ -70,6 +92,9 @@ func (t *Tool) Schema() map[string]any {
 	}
 	for _, p := range t.Params {
 		s := map[string]any{"type": p.Type, "description": p.Description}
+		if p.Type == "object" {
+			s["additionalProperties"] = true
+		}
 		if len(p.Enum) > 0 {
 			s["enum"] = p.Enum
 		}
@@ -122,6 +147,11 @@ func (t *Tool) Validate(raw map[string]any) (map[string]any, error) {
 			if p.Default != nil {
 				out[p.Name] = p.Default
 			}
+		}
+	}
+	if t.Check != nil {
+		if err := t.Check(out); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -184,6 +214,23 @@ func coerce(p *Param, v any) (any, error) {
 			return int(f), nil
 		}
 		return f, nil
+	case "object":
+		switch x := v.(type) {
+		case map[string]any:
+			return x, nil
+		case string: // some models send nested objects as JSON text
+			if strings.TrimSpace(x) == "" {
+				return map[string]any{}, nil
+			}
+			var m map[string]any
+			if err := json.Unmarshal([]byte(x), &m); err != nil {
+				return nil, fmt.Errorf("must be an object")
+			}
+			return m, nil
+		case nil:
+			return map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("must be an object")
 	case "boolean":
 		switch x := v.(type) {
 		case bool:

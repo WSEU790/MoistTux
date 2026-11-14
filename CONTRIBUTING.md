@@ -20,9 +20,11 @@ never a real one.
 
 1. No fabricated data, mock-ups or placeholder buttons. If something is
    unavailable, show that and the reason.
-2. No free-form command execution, for the AI or for people. Operations are
-   typed tools with validated arguments. Root access goes only through the
-   allowlisted helper, which validates again as root.
+2. No unapproved free-form command execution. Operations are typed tools or
+   catalog commands with validated arguments; root access goes only through
+   the allowlisted helper, which validates again as root. Shell commands run
+   only after a person approves each one, with a signature the server
+   verifies. Do not add other ways to run strings.
 3. No plaintext secrets at rest, and no credentials in AI prompts or tool
    results.
 4. No destructive or risky change without authorization: approvals with an

@@ -70,7 +70,26 @@ patterns both before calling sudo and again inside the root process. Operations:
 `apt-upgrade all|security|packages <names…>`, `ufw-status`, `nft-list`,
 `iptables-save`, `sshd-config`, `fail2ban-status [jail]`,
 `read-file <path> <max>`, `sockets`, `du <path> <depth>`,
-`largefiles <path> <min> <limit>` and `reboot`.
+`largefiles <path> <min> <limit>`, `reboot`, `catalog <id> name=value…`
+(a root command from the shared catalog, rebuilt and validated as root) and
+`shell <grant> <signature>` (a person-approved command; see below).
+
+## Catalog and shell endpoints
+
+* `POST /v1/catalog/run` `{id, args}` runs a catalog command
+  (`internal/protocol/catalog.go`). Non-root entries run as the agent's user;
+  root entries go through the helper's `catalog` operation.
+* `POST /v1/shell/run` `{token, sig}` runs a shell command approved in NEXUS.
+  `token` is a base64 `ShellGrant` `{v, machine_id, command, nonce, exp,
+  timeout_sec}`, and `sig` is the core's ECDSA P-256 signature over it. As
+  root, the helper checks four things before running `sh -c`:
+  * the signature, against `/etc/nexus-agent/shell-signers` (root-owned,
+    written by `nexus-agent install --shell-signer`);
+  * `/etc/machine-id`;
+  * the expiry (at most 10 minutes ahead; NEXUS uses 2);
+  * a single-use nonce.
+
+  The command is checked against the same block list as in NEXUS.
 
 `read-file` accepts only paths under `/var/log` and selected configuration
 directories. It refuses keys, shadow files and credential files, including

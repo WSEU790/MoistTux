@@ -67,11 +67,11 @@ against a real Linux host during development.
 | Rule | Mechanism |
 |---|---|
 | No fabricated telemetry | All values come from agent reads; missing sources are reported as unavailable (for example "no temperature sensors", "no backup center"). Charts break lines at gaps instead of interpolating. |
-| No unrestricted AI commands | No shell tool exists. 41 typed tools with schema validation; unknown arguments are rejected; every call passes `ai.Decide`. |
+| No unrestricted AI commands | 46 typed tools and 111 catalog commands with schema and argument validation; unknown arguments are rejected; every call passes `ai.Decide`. Shell commands (owner's decision, November 2026) need a person's approval for each command in every mode, can be turned off per server, refuse destructive patterns, and run only with a NEXUS-signed, single-use grant verified as root on the server. Verified on Ubuntu 24.04: approval flow end to end; forged grants, a grant for another server, an edited key file and replays are refused. |
 | Credentials never exposed to the model | Tools receive server IDs only. Container environment *values* are never collected, and helper file reads refuse key and credential files. |
 | No plaintext passwords | Secrets, including optionally saved SSH logins, are sealed with DPAPI on Windows (AES-256-GCM key file elsewhere). A test checks that the password never appears in the database, WAL or log files. |
 | No destructive operations without authorization | High risk always needs approval and cannot be configured otherwise; reboots also need a typed hostname. No file-deletion or data-removal tool exists. |
-| No automatic SSH or firewall changes | No tools exist for them. |
+| No automatic SSH or firewall changes | Firewall catalog commands are high risk (always approval, with lockout warnings); SSH changes are possible only through an approved shell command, with an SSH warning. |
 | No reboot without policy | `reboot_server` is denied unless the server's policy enables reboot requests, and it then still needs approval. |
 | No claim of resolution without verification | Action endpoints re-read state, and tools return an explicit `verification` verdict that the model is instructed to report. |
 | Service health is more than a running process | The health assessment combines unit state, restart count, result, error-level logs and listening sockets; HTTP and TCP probes are available. |

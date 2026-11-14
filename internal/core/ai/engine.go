@@ -13,6 +13,7 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
+	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"github.com/WSEU790/MoistTux/internal/core/ollama"
 	"github.com/WSEU790/MoistTux/internal/core/store"
 )
@@ -25,6 +26,8 @@ type Deps struct {
 	Log      *log.Logger
 	Registry *Registry
 	Policies *PolicyStore
+	// Knowledge is the built-in runbook library (may be nil in tests).
+	Knowledge *knowledge.Library
 }
 
 // ResolveServer accepts an ID, a display name or a hostname.
@@ -702,17 +705,18 @@ func (e *Engine) Execute(ctx context.Context, r ExecRequest) (ExecOutcome, bool,
 		// Policy denials still apply; previews are confirmed in the UI.
 		v = Decide(ModeAdministrator, t, args, env.Server, pol, time.Now())
 		if v.Decision == Approve {
-			if !r.OperatorConfirmed && t.Risk != RiskRead {
+			if !r.OperatorConfirmed && t.RiskOf(args) != RiskRead {
 				return ExecOutcome{}, false, fmt.Errorf("operator confirmation required")
 			}
 			v = Verdict{Allow, "confirmed by the operator in the NEXUS interface"}
+			env.HumanApproved = true
 		}
 	} else {
 		v = Decide(r.Mode, t, args, env.Server, pol, time.Now())
 	}
 	exe := &store.Execution{
 		ConversationID: r.ConversationID, IncidentID: r.IncidentID, ServerID: serverID, Tool: t.Name, Args: toJSON(args),
-		Risk: string(t.Risk), RequestedBy: r.RequestedBy, Mode: string(r.Mode), Decision: string(v.Decision), DecisionReason: v.Reason,
+		Risk: string(t.RiskOf(args)), RequestedBy: r.RequestedBy, Mode: string(r.Mode), Decision: string(v.Decision), DecisionReason: v.Reason,
 	}
 	switch v.Decision {
 	case Deny:
@@ -726,7 +730,7 @@ func (e *Engine) Execute(ctx context.Context, r ExecRequest) (ExecOutcome, bool,
 		return ExecOutcome{}, false, err
 	}
 	out := ExecOutcome{ExecutionID: exe.ID, Status: exe.Status}
-	if t.Risk != RiskRead {
+	if t.RiskOf(args) != RiskRead {
 		_ = e.deps.Store.Audit(ctx, r.RequestedBy, "tool."+string(v.Decision), t.Name, map[string]any{"execution": exe.ID, "server": serverID, "args": args, "reason": v.Reason, "mode": r.Mode})
 	}
 	e.deps.Bus.Publish("execution", exe)
@@ -768,7 +772,7 @@ func (e *Engine) run(ctx context.Context, t *Tool, env *Env, args map[string]any
 	} else {
 		_ = e.deps.Store.FinishExecution(ctx, execID, "succeeded", res, "")
 	}
-	if t.Risk != RiskRead {
+	if t.RiskOf(args) != RiskRead {
 		detail := map[string]any{"execution": execID, "duration_ms": time.Since(start).Milliseconds(), "ok": err == nil}
 		if err != nil {
 			detail["error"] = err.Error()
@@ -794,7 +798,7 @@ func (e *Engine) requestApproval(ctx context.Context, t *Tool, env *Env, args ma
 	} else {
 		imp = &Impact{Summary: t.Name}
 	}
-	if t.Risk == RiskHigh && imp.Confirm == "" {
+	if t.RiskOf(args) == RiskHigh && imp.Confirm == "" && !imp.NoConfirm {
 		imp.Confirm = env.Server.Name
 	}
 	summary := t.Name
@@ -804,12 +808,12 @@ func (e *Engine) requestApproval(ctx context.Context, t *Tool, env *Env, args ma
 	if env.Server != nil {
 		summary += " on " + env.Server.Name
 	}
-	ap := &store.Approval{ExecutionID: exe.ID, ServerID: exe.ServerID, Tool: t.Name, Risk: string(t.Risk), Summary: summary, Impact: toJSON(imp), ExpiresAt: time.Now().Add(time.Duration(e.Settings().ApprovalTTL) * time.Minute)}
+	ap := &store.Approval{ExecutionID: exe.ID, ServerID: exe.ServerID, Tool: t.Name, Risk: string(t.RiskOf(args)), Summary: summary, Impact: toJSON(imp), ExpiresAt: time.Now().Add(time.Duration(e.Settings().ApprovalTTL) * time.Minute)}
 	if err := e.deps.Store.CreateApproval(ctx, ap); err != nil {
 		return nil, err
 	}
 	if exe.ConversationID != "" {
-		m := &store.Message{ConversationID: exe.ConversationID, Role: "event", Content: "Approval required: " + summary, ExecutionID: exe.ID, Meta: toJSON(map[string]any{"kind": "approval", "approval_id": ap.ID, "risk": t.Risk, "reason": exe.DecisionReason})}
+		m := &store.Message{ConversationID: exe.ConversationID, Role: "event", Content: "Approval required: " + summary, ExecutionID: exe.ID, Meta: toJSON(map[string]any{"kind": "approval", "approval_id": ap.ID, "risk": t.RiskOf(args), "reason": exe.DecisionReason})}
 		_ = e.deps.Store.AddMessage(ctx, m)
 		e.deps.Bus.Publish("chat.message", m)
 	}
@@ -866,7 +870,7 @@ func (e *Engine) afterDecision(ap *store.Approval, exe *store.Execution, approve
 		var args map[string]any
 		_ = json.Unmarshal(exe.Args, &args)
 		srv, err := e.deps.Store.GetServer(ctx, exe.ServerID)
-		env := &Env{Deps: e.deps, Server: srv}
+		env := &Env{Deps: e.deps, Server: srv, HumanApproved: true}
 		if err == nil {
 			env.Client, err = e.deps.Fleet.Client(srv.ID)
 		}

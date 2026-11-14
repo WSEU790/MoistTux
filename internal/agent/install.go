@@ -33,6 +33,10 @@ type InstallOptions struct {
 	Docker   bool // add the service user to the docker group (root-equivalent)
 	Interval time.Duration
 	Out      io.Writer
+	// ShellSigner trusts a NEXUS core's public key for person-approved shell
+	// commands (written to ShellSignersPath, root-owned).
+	ShellSigner      string
+	ShellSignerLabel string
 }
 
 func step(out io.Writer, format string, a ...any) { fmt.Fprintf(out, "  • "+format+"\n", a...) }
@@ -133,6 +137,12 @@ func Install(opts InstallOptions) error {
 		return err
 	}
 	step(out, "sudoers entry %s (helper only)", SudoersPath)
+	if opts.ShellSigner != "" {
+		if err := AddShellSigner(opts.ShellSigner, opts.ShellSignerLabel); err != nil {
+			return err
+		}
+		step(out, "trusted NEXUS key for approved shell commands in %s", ShellSignersPath)
+	}
 
 	// 5. systemd unit.
 	unit := fmt.Sprintf(`[Unit]
@@ -227,6 +237,10 @@ func Uninstall(out io.Writer, purge bool) error {
 	}
 	ctx := context.Background()
 	runCmd(ctx, time.Minute, nil, "systemctl", "disable", "--now", "nexus-agent.service")
+	if err := os.RemoveAll(filepath.Dir(ShellSignersPath)); err == nil {
+		step(out, "removed %s", filepath.Dir(ShellSignersPath))
+	}
+	_ = os.RemoveAll(shellNonceDir)
 	for _, p := range []string{UnitPath, SudoersPath} {
 		if err := os.Remove(p); err == nil {
 			step(out, "removed %s", p)

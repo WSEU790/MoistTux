@@ -57,6 +57,8 @@ func human(b uint64) string {
 // agent endpoint; there is no generic command execution tool.
 func BuildRegistry() *Registry {
 	r := NewRegistry()
+	registerCommandTools(r)
+	registerKnowledgeTools(r)
 
 	// ------------------------------------------------------------ fleet (read)
 	r.Add(&Tool{

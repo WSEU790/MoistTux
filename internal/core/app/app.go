@@ -23,6 +23,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/identity"
+	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"github.com/WSEU790/MoistTux/internal/core/monitor"
 	"github.com/WSEU790/MoistTux/internal/core/notify"
 	"github.com/WSEU790/MoistTux/internal/core/secrets"
@@ -52,27 +53,28 @@ type Options struct {
 }
 
 type App struct {
-	Store    *store.Store
-	Bus      *events.Bus
-	Fleet    *fleet.Manager
-	Monitor  *monitor.Engine
-	Notifier *notify.Notifier
-	Deploy   *deploy.Manager
-	Update   *update.Updater
-	AI       *ai.Engine
-	API      *api.Server
-	opts     Options
-	Log      *log.Logger
+	Store     *store.Store
+	Bus       *events.Bus
+	Fleet     *fleet.Manager
+	Monitor   *monitor.Engine
+	Notifier  *notify.Notifier
+	Deploy    *deploy.Manager
+	Update    *update.Updater
+	AI        *ai.Engine
+	Knowledge *knowledge.Library
+	API       *api.Server
+	opts      Options
+	Log       *log.Logger
 
-	URL      string // launch URL including the one-time token
-	Addr     string
-	Token    string
-	srv      *http.Server
-	ln       net.Listener
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	idMu     sync.RWMutex
-	ident    *identity.Identity
+	URL    string // launch URL including the one-time token
+	Addr   string
+	Token  string
+	srv    *http.Server
+	ln     net.Listener
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	idMu   sync.RWMutex
+	ident  *identity.Identity
 }
 
 // DefaultDataDir returns %LOCALAPPDATA%\NEXUS on Windows and the XDG data
@@ -157,7 +159,12 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 	reg := ai.BuildRegistry()
 	pol := &ai.PolicyStore{}
 	*pol = ai.NewPolicyStore(st)
-	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol}
+	lib, err := knowledge.Load()
+	if err != nil {
+		return nil, fmt.Errorf("knowledge library: %w", err)
+	}
+	a.Knowledge = lib
+	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol, Knowledge: lib}
 	a.AI = ai.NewEngine(deps)
 	a.Monitor.SetInvestigator(func(ctx context.Context, inc *store.Incident) {
 		p, _ := pol.Effective(ctx, inc.ServerID)
@@ -175,7 +182,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)

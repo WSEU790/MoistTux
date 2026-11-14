@@ -249,6 +249,8 @@ func (a *Agent) routes() http.Handler {
 	auth("GET /v1/packages/updates", a.handleUpdates)
 	auth("GET /v1/packages/history", a.handlePkgHistory)
 	auth("POST /v1/packages/refresh", a.handlePkgRefresh)
+	auth("POST /v1/catalog/run", a.handleCatalogRun)
+	auth("POST /v1/shell/run", a.handleShellRun)
 	auth("POST /v1/packages/upgrade", a.handlePkgUpgrade)
 	auth("GET /v1/security/ssh", a.handleSSH)
 	auth("GET /v1/security/auth", a.handleAuth)

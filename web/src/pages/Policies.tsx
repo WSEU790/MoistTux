@@ -21,6 +21,7 @@ function preview(p: Policy, t: ToolInfo, mode: "administrator" | "autonomous", e
   if (t.risk === "high") {
     if (p.high === "deny") return { d: "deny", why: "high risk denied" };
     if (t.name === "reboot_server" && !p.allow_reboot) return { d: "deny", why: "reboots not allowed" };
+    if (t.name === "run_shell_command" && p.shell_disabled) return { d: "deny", why: "shell commands off" };
     return { d: "approve", why: "always approved by a human" };
   }
   let base = t.risk === "low" ? p.low : p.medium;
@@ -152,6 +153,7 @@ export function Policies({ scope }: { scope?: string }) {
               <Panel title="Safeguards">
                 <div className="col" style={{ gap: 14 }}>
                   <Switch on={p.allow_reboot} onChange={(v) => set({ allow_reboot: v })} label={<span>Allow reboot requests <span className="faint">— reboots still need explicit approval with a typed hostname</span></span>} />
+                  <Switch on={!p.shell_disabled} onChange={(v) => set({ shell_disabled: !v })} label={<span>Allow approved shell commands <span className="faint">— the AI may propose shell commands to run as root; every one needs your approval, and the server only runs commands signed by this NEXUS</span></span>} />
                   <div>
                     <div className="label" style={{ marginBottom: 8 }}>Protected services and containers</div>
                     <div className="row wrap" style={{ gap: 6, marginBottom: 8 }}>

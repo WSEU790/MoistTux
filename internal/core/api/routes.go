@@ -105,6 +105,22 @@ func (s *Server) routes(m *http.ServeMux) {
 		}
 		writeJSON(w, 202, map[string]bool{"restarting": true})
 	})
+	m.HandleFunc("GET /api/knowledge", func(w http.ResponseWriter, r *http.Request) {
+		if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+			writeJSON(w, 200, map[string]any{"results": s.Knowledge.Search(q, 20)})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"docs": s.Knowledge.Docs()})
+	})
+	m.HandleFunc("GET /api/knowledge/{id}", func(w http.ResponseWriter, r *http.Request) {
+		d, ok := s.Knowledge.Get(r.PathValue("id"))
+		if !ok {
+			writeErr(w, 404, fmt.Errorf("no runbook %q", r.PathValue("id")))
+			return
+		}
+		writeJSON(w, 200, d)
+	})
+	m.HandleFunc("GET /api/admin-commands", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, protocol.Catalog) })
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
 	m.HandleFunc("GET /api/servers/{id}/ssh", func(w http.ResponseWriter, r *http.Request) {
 		out := map[string]any{"saved": false, "tunnel": nil}
@@ -501,7 +517,7 @@ func (s *Server) actionPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	pol, scope := s.Policies.Effective(r.Context(), srv.ID)
 	v := ai.Decide(ai.ModeAdministrator, t, args, srv, pol, time.Now())
-	out := map[string]any{"tool": t.Name, "risk": t.Risk, "policy": v, "policy_scope": scope}
+	out := map[string]any{"tool": t.Name, "risk": t.RiskOf(args), "policy": v, "policy_scope": scope}
 	if t.Preview != nil {
 		imp, err := t.Preview(r.Context(), &ai.Env{Server: srv, Client: cl}, args)
 		if err != nil {
@@ -524,7 +540,16 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("unknown server tool %q", req.Tool))
 		return
 	}
-	if t.Risk == ai.RiskHigh {
+	var vargs map[string]any
+	if req.Args != nil {
+		a, err := t.Validate(req.Args)
+		if err != nil {
+			writeErr(w, 400, fmt.Errorf("invalid arguments: %w", err))
+			return
+		}
+		vargs = a
+	}
+	if t.RiskOf(vargs) == ai.RiskHigh && !t.Shell {
 		srv, err := s.Store.GetServer(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeErr(w, statusFor(err), err)
@@ -656,23 +681,23 @@ func (s *Server) readNotifications(w http.ResponseWriter, r *http.Request) {
 
 // MonitoringSettings is the UI-facing form of monitor + fleet configuration.
 type MonitoringSettings struct {
-	CPUWarn, CPUCrit           float64
-	MemWarn, MemCrit           float64
-	SwapWarn                   float64
-	DiskWarn, DiskCrit         float64
-	InodeWarn, InodeCrit       float64
-	LoadPerThreadWarn          float64
-	TempWarn, TempCrit         float64
-	SustainSec                 int
-	NotifyCooldownSec          int
-	IncidentWindowSec          int
-	AutoInvestigate            bool
-	InvestigateMinSeverity     string
-	PollIntervalSec            int
-	ServicesIntervalSec        int
-	DockerIntervalSec          int
-	UpdatesIntervalSec         int
-	PostureIntervalSec         int
+	CPUWarn, CPUCrit       float64
+	MemWarn, MemCrit       float64
+	SwapWarn               float64
+	DiskWarn, DiskCrit     float64
+	InodeWarn, InodeCrit   float64
+	LoadPerThreadWarn      float64
+	TempWarn, TempCrit     float64
+	SustainSec             int
+	NotifyCooldownSec      int
+	IncidentWindowSec      int
+	AutoInvestigate        bool
+	InvestigateMinSeverity string
+	PollIntervalSec        int
+	ServicesIntervalSec    int
+	DockerIntervalSec      int
+	UpdatesIntervalSec     int
+	PostureIntervalSec     int
 }
 
 func monitoringFrom(m monitor.Config, f fleet.Config) MonitoringSettings {

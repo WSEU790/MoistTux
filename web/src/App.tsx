@@ -15,6 +15,7 @@ import { Topology } from "./pages/Topology";
 import { Activity } from "./pages/Activity";
 import { MemoryPage } from "./pages/Memory";
 import { Policies } from "./pages/Policies";
+import { Knowledge } from "./pages/Knowledge";
 import { Settings, restartToUpdate, useUpdateStatus } from "./pages/Settings";
 
 type NavItem = { id: string; label: string; icon: string; badge?: () => { n: number; cls?: string } | null };
@@ -66,6 +67,7 @@ export function App() {
       title: "Govern",
       items: [
         { id: "policies", label: "Automation Policies", icon: "policy" },
+        { id: "knowledge", label: "Knowledge", icon: "book" },
         { id: "memory", label: "AI Memory", icon: "memory" },
         { id: "activity", label: "Activity & Audit", icon: "audit" },
       ],
@@ -106,6 +108,10 @@ export function App() {
     case "activity":
       page = <Activity />;
       title = "Activity & Audit";
+      break;
+    case "knowledge":
+      page = <Knowledge id={route.parts[1]} />;
+      title = "Knowledge";
       break;
     case "memory":
       page = <MemoryPage />;

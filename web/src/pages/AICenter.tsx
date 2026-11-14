@@ -449,7 +449,7 @@ function ApprovalCard({ id, reason }: { id: string; reason?: string }) {
       </div>
       <div style={{ fontSize: "var(--fs-lg)", marginBottom: 6 }}>{imp?.summary ?? a.summary}</div>
       {reason && <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>Policy: {reason}</div>}
-      {imp?.effects && imp.effects.length > 0 && <ul style={{ margin: "0 0 8px", paddingLeft: 18 }} className="dim">{imp.effects.slice(0, 12).map((e, i) => <li key={i} style={{ fontSize: 12.5 }}>{e}</li>)}</ul>}
+      {imp?.effects && imp.effects.length > 0 && <ul style={{ margin: "0 0 8px", paddingLeft: 18 }} className="dim">{imp.effects.slice(0, 12).map((e, i) => <li key={i} style={{ fontSize: 12.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{e}</li>)}</ul>}
       {imp?.risks?.map((r, i) => <div key={i} className="row warn-t" style={{ fontSize: 12.5, marginBottom: 3 }}><Icon name="alert" size={12} /> {r}</div>)}
       {imp?.rollback && <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>Rollback: {imp.rollback}</div>}
       {pending && (

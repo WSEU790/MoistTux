@@ -312,7 +312,7 @@ export function ActionDialog({ serverId, tool, args, title, onClose, onDone }: {
             <div>
               <div className="label" style={{ marginBottom: 6 }}>What will happen</div>
               <ul style={{ margin: 0, paddingLeft: 18 }} className="dim">
-                {imp.effects.map((e, i) => <li key={i} className="mono" style={{ fontSize: 12 }}>{e}</li>)}
+                {imp.effects.map((e, i) => <li key={i} className="mono" style={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{e}</li>)}
               </ul>
             </div>
           )}

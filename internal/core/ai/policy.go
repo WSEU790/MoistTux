@@ -73,6 +73,10 @@ type Policy struct {
 	MonitoringLevel string `json:"monitoring_level"`
 	AutoInvestigate bool   `json:"auto_investigate"`
 	AllowReboot     bool   `json:"allow_reboot"` // even then, reboots always need approval
+
+	// ShellDisabled turns off person-approved shell commands for the scope.
+	// (Stored policies predating the setting therefore keep them enabled.)
+	ShellDisabled bool `json:"shell_disabled"`
 }
 
 func DefaultPolicy() Policy {
@@ -192,7 +196,8 @@ type Verdict struct {
 
 // Decide is the single choke point between the model and every tool.
 func Decide(mode Mode, t *Tool, args map[string]any, srv *store.Server, p Policy, now time.Time) Verdict {
-	if t.Risk == RiskRead {
+	risk := t.RiskOf(args)
+	if risk == RiskRead {
 		return Verdict{Allow, "read-only operation"}
 	}
 	if t.Internal {
@@ -201,12 +206,19 @@ func Decide(mode Mode, t *Tool, args map[string]any, srv *store.Server, p Policy
 	if mode == ModeAssistant || mode == ModeAnalyst {
 		return Verdict{Deny, fmt.Sprintf("%s mode is read-only; switch the conversation to Administrator mode to request changes", strings.Title(string(mode)))}
 	}
+	if t.Shell && p.ShellDisabled {
+		return Verdict{Deny, "shell commands are turned off in this server's policy"}
+	}
 	if d, ok := p.ToolOverrides[t.Name]; ok && d == Deny {
 		return Verdict{Deny, "denied by policy override for " + t.Name}
 	}
 	// Protected targets always need a human.
-	for _, key := range []string{"unit", "container"} {
-		if v, ok := args[key].(string); ok {
+	targets := []any{args["unit"], args["container"]}
+	if nested, ok := args["args"].(map[string]any); ok { // catalog commands
+		targets = append(targets, nested["unit"], nested["container"])
+	}
+	for _, t := range targets {
+		if v, ok := t.(string); ok {
 			for _, prot := range p.Protected {
 				if strings.EqualFold(prot, v) || strings.EqualFold(prot+".service", v) {
 					return Verdict{Approve, v + " is marked protected in this server's policy"}
@@ -214,7 +226,7 @@ func Decide(mode Mode, t *Tool, args map[string]any, srv *store.Server, p Policy
 			}
 		}
 	}
-	if t.Risk == RiskHigh {
+	if risk == RiskHigh {
 		if p.High == Deny {
 			return Verdict{Deny, "high-risk operations are denied by policy"}
 		}
@@ -224,14 +236,14 @@ func Decide(mode Mode, t *Tool, args map[string]any, srv *store.Server, p Policy
 		return Verdict{Approve, "high-risk operation: explicit approval with impact preview is always required"}
 	}
 	base := p.Medium
-	if t.Risk == RiskLow {
+	if risk == RiskLow {
 		base = p.Low
 	}
 	if d, ok := p.ToolOverrides[t.Name]; ok {
 		base = d
 	}
 	if base == Deny {
-		return Verdict{Deny, fmt.Sprintf("%s-risk operations are denied by policy", t.Risk)}
+		return Verdict{Deny, fmt.Sprintf("%s-risk operations are denied by policy", risk)}
 	}
 	if mode == ModeAutonomous {
 		if !p.AutonomousEnabled {
@@ -249,15 +261,15 @@ func Decide(mode Mode, t *Tool, args map[string]any, srv *store.Server, p Policy
 		if !p.InWindow(now) {
 			return Verdict{Approve, "outside the configured maintenance windows"}
 		}
-		if srv != nil && srv.Environment == "production" && t.Risk == RiskMedium && base != Allow {
+		if srv != nil && srv.Environment == "production" && risk == RiskMedium && base != Allow {
 			return Verdict{Approve, "medium-risk change on a production server; policy requires approval"}
 		}
 		return Verdict{Allow, "permitted by the autonomous policy for this server"}
 	}
 	if base == Allow {
-		return Verdict{Allow, fmt.Sprintf("%s-risk operations are pre-authorised by policy", t.Risk)}
+		return Verdict{Allow, fmt.Sprintf("%s-risk operations are pre-authorised by policy", risk)}
 	}
-	return Verdict{Approve, fmt.Sprintf("%s-risk operation requires approval", t.Risk)}
+	return Verdict{Approve, fmt.Sprintf("%s-risk operation requires approval", risk)}
 }
 
 // NewPolicyStore returns a policy store backed by st.
