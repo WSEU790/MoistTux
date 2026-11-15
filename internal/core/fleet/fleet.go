@@ -475,7 +475,7 @@ func (w *worker) tick(ctx context.Context) time.Duration {
 	if srv.Health != nil && !srv.Health.SamplerOK && srv.Health.SamplerError != "" {
 		status, reason = "degraded", "agent telemetry sampler: "+srv.Health.SamplerError
 	} else if srv.Health != nil && !srv.Health.HelperOK {
-		reason = "privileged helper unavailable: " + srv.Health.HelperError
+		reason = "privileged helper unavailable (root operations will fail; fix with Upgrade/repair over SSH in this server's settings): " + srv.Health.HelperError
 	}
 	w.setStatus(ctx, srv, status, reason, true, hooks)
 

@@ -84,15 +84,16 @@ func BuildRegistry() *Registry {
 				}
 				latest, at := env.Deps.Fleet.Latest(s.ID)
 				if latest != nil {
-					row["cpu_pct"] = latest.CPU.UsagePct
-					row["mem_pct"] = latest.Mem.UsedPct
-					maxFS := 0.0
+					maxFS, mount := 0.0, ""
 					for _, f := range latest.FS {
 						if f.UsedPct > maxFS {
-							maxFS = f.UsedPct
+							maxFS, mount = f.UsedPct, f.Mount
 						}
 					}
-					row["fullest_fs_pct"] = maxFS
+					// Named so models do not read it as "share of filesystems that are full".
+					row["fullest_filesystem"] = map[string]any{"mount": mount, "used_pct": round1(maxFS)}
+					row["cpu_pct"] = round1(latest.CPU.UsagePct)
+					row["mem_used_pct"] = round1(latest.Mem.UsedPct)
 					row["sampled_at"] = at.UTC().Format(time.RFC3339)
 				}
 				if al, err := env.Deps.Store.FiringForServer(ctx, s.ID); err == nil {

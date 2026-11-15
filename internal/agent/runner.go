@@ -154,6 +154,9 @@ func (p *Privileged) Do(ctx context.Context, timeout time.Duration, out any, op 
 		var env helperEnvelope
 		if err := json.Unmarshal([]byte(strings.TrimSpace(r.Stdout)), &env); err != nil {
 			msg := strings.TrimSpace(r.Stderr)
+			if strings.Contains(msg, "no new privileges") {
+				return fmt.Errorf("the nexus-agent service runs with NoNewPrivileges, which stops its sudo helper (agents installed by NEXUS 0.3.7 or earlier on some systems). Fix: in NEXUS, open this server's settings and run Upgrade/repair over SSH. (%s)", firstLine(msg))
+			}
 			if sudoDenied(msg) {
 				return fmt.Errorf("privileged helper not authorised by sudoers (re-run `nexus-agent install` as root): %s", msg)
 			}

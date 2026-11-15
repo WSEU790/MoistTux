@@ -145,36 +145,7 @@ func Install(opts InstallOptions) error {
 	}
 
 	// 5. systemd unit.
-	unit := fmt.Sprintf(`[Unit]
-Description=NEXUS infrastructure agent
-Documentation=https://github.com/WSEU790/MoistTux
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=%s
-Group=%s
-ExecStart=%s run --state-dir %s --listen %s --interval %s
-Restart=on-failure
-RestartSec=5
-# Resource limits keep the agent lightweight on small servers.
-Nice=5
-CPUWeight=50
-MemoryMax=512M
-TasksMax=256
-# Hardening compatible with the sudo-based helper (which needs setuid, so
-# NoNewPrivileges and ProtectSystem=strict cannot be used here).
-PrivateTmp=yes
-ProtectHome=read-only
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-LockPersonality=yes
-RestrictRealtime=yes
-
-[Install]
-WantedBy=multi-user.target
-`, ServiceUser, ServiceUser, InstallBin, DefaultState, opts.Listen, opts.Interval)
+	unit := UnitFile(opts.Listen, opts.Interval)
 	if err := os.WriteFile(UnitPath, []byte(unit), 0o644); err != nil {
 		return err
 	}
@@ -318,4 +289,38 @@ func chownTree(dir string, uid, gid int) error {
 		}
 		return os.Lchown(p, uid, gid)
 	})
+}
+
+// UnitFile is the agent's systemd unit.
+func UnitFile(listen string, interval time.Duration) string {
+	return fmt.Sprintf(`[Unit]
+Description=NEXUS infrastructure agent
+Documentation=https://github.com/WSEU790/MoistTux
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%s
+Group=%s
+ExecStart=%s run --state-dir %s --listen %s --interval %s
+Restart=on-failure
+RestartSec=5
+# Resource limits keep the agent lightweight on small servers.
+Nice=5
+CPUWeight=50
+MemoryMax=512M
+TasksMax=256
+# The agent's root operations go through sudo (a setuid program), so the
+# service must allow privilege escalation. Settings such as
+# ProtectKernelModules, LockPersonality, RestrictRealtime, SystemCallFilter
+# or PrivateDevices silently imply NoNewPrivileges for a non-root service and
+# make every sudo call fail; mount sandboxing (PrivateTmp, ProtectHome)
+# would make root commands see a different /tmp and a read-only /home.
+# Isolation comes from the unprivileged user and the allowlisted helper.
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target
+`, ServiceUser, ServiceUser, InstallBin, DefaultState, listen, interval)
 }

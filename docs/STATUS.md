@@ -21,6 +21,14 @@ against a real Linux host during development.
   wildcard that the first sudoers rule used, so the helper is now a separate
   root-owned binary named in sudoers without wildcards. Upgrading an older
   agent over SSH replaces the old rule (verified on Ubuntu 24.04).
+* Agent unit fix (NEXUS 0.3.8): agents from 0.3.7 and earlier used systemd
+  sandboxing options that imply NoNewPrivileges for a non-root service, which
+  on a real Debian 12 server blocked every sudo-helper call ("no new
+  privileges flag is set"). The lab containers did not enforce it, so it was
+  missed. The unit now sets `NoNewPrivileges=no` without those options, a
+  test keeps them out, and the error tells the operator to run Upgrade/repair
+  over SSH. The error was reproduced on the lab with a forced
+  `NoNewPrivileges=yes`, and the server recovered without it.
 * SSH tunnel for agents behind firewalls: verified on Ubuntu 24.04 with ufw
   dropping port 7443. Covered: automatic fallback during install, the agent
   bound to 127.0.0.1 only, ufw untouched, and the restricted key unable to run

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sudo-rs (the default sudo from Ubuntu 25.10) rejects argument wildcards and
@@ -64,5 +65,21 @@ func TestHelperExecutableName(t *testing.T) {
 	}
 	if filepath.Base(HelperBin) != "nexus-helper" || filepath.Dir(HelperBin) != filepath.Dir(InstallBin) {
 		t.Fatalf("helper %s must sit next to %s", HelperBin, InstallBin)
+	}
+}
+
+// Options that imply NoNewPrivileges for a non-root service would stop the
+// sudo helper (seen on Debian 12 with agents from NEXUS 0.3.7 and earlier).
+func TestUnitAllowsSudo(t *testing.T) {
+	u := UnitFile(":7443", 5*time.Second)
+	for _, bad := range []string{"ProtectKernelModules", "ProtectKernelTunables", "ProtectKernelLogs", "ProtectClock", "LockPersonality", "RestrictRealtime", "RestrictSUIDSGID", "RestrictNamespaces", "RestrictAddressFamilies", "SystemCallFilter", "SystemCallArchitectures", "MemoryDenyWriteExecute", "PrivateDevices", "DynamicUser", "NoNewPrivileges=yes", "PrivateTmp", "ProtectHome", "ProtectSystem"} {
+		for _, line := range strings.Split(u, "\n") {
+			if strings.HasPrefix(line, bad) {
+				t.Errorf("unit contains %q, which breaks the sudo helper or root commands", line)
+			}
+		}
+	}
+	if !strings.Contains(u, "\nNoNewPrivileges=no\n") || !strings.Contains(u, "User=nexus") {
+		t.Errorf("unit:\n%s", u)
 	}
 }
