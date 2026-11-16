@@ -16,6 +16,7 @@ import { Activity } from "./pages/Activity";
 import { MemoryPage } from "./pages/Memory";
 import { Policies } from "./pages/Policies";
 import { Knowledge } from "./pages/Knowledge";
+import { Websites } from "./pages/Websites";
 import { Settings, restartToUpdate, useUpdateStatus } from "./pages/Settings";
 
 type NavItem = { id: string; label: string; icon: string; badge?: () => { n: number; cls?: string } | null };
@@ -44,6 +45,7 @@ export function App() {
         { id: "", label: "Command Center", icon: "command" },
         { id: "fleet", label: "Fleet", icon: "fleet", badge: () => (overview?.servers?.offline ? { n: overview.servers.offline, cls: "crit" } : null) },
         { id: "topology", label: "Topology", icon: "topology" },
+        { id: "websites", label: "Websites", icon: "globe" },
       ],
     },
     {
@@ -108,6 +110,10 @@ export function App() {
     case "activity":
       page = <Activity />;
       title = "Activity & Audit";
+      break;
+    case "websites":
+      page = <Websites />;
+      title = "Websites";
       break;
     case "knowledge":
       page = <Knowledge id={route.parts[1]} />;

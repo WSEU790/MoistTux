@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
+	"github.com/WSEU790/MoistTux/internal/core/forecast"
 	"github.com/WSEU790/MoistTux/internal/core/knowledge"
+	"github.com/WSEU790/MoistTux/internal/core/sitecheck"
 	"io"
 	"io/fs"
 	"log"
@@ -35,6 +37,8 @@ import (
 type Server struct {
 	Knowledge   *knowledge.Library
 	Agents      *agentupdate.Manager
+	Sites       *sitecheck.Runner
+	Forecast    *forecast.Engine
 	Store       *store.Store
 	Bus         *events.Bus
 	Fleet       *fleet.Manager

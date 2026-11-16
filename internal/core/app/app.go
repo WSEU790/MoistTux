@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
+	"github.com/WSEU790/MoistTux/internal/core/forecast"
+	"github.com/WSEU790/MoistTux/internal/core/sitecheck"
+	"github.com/WSEU790/MoistTux/internal/protocol"
 	"io"
 	"log"
 	"net"
@@ -64,6 +67,8 @@ type App struct {
 	AI        *ai.Engine
 	Knowledge *knowledge.Library
 	Agents    *agentupdate.Manager
+	Sites     *sitecheck.Runner
+	Forecast  *forecast.Engine
 	API       *api.Server
 	opts      Options
 	Log       *log.Logger
@@ -177,15 +182,23 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 	})
 	a.Fleet.SetDialers(tunnel.NewManager(st, prot, logger))
 	a.Agents = agentupdate.New(a.Fleet, st, a.Bus, logger, Version)
+	a.Sites = sitecheck.New(st, a.Monitor, a.Bus, logger)
+	deps.Sites = a.Sites
 	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, prot, logger)
-	a.Fleet.SetHooks(fleet.Hooks{OnSamples: a.Monitor.OnSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
+	a.Forecast = forecast.New(st, a.Monitor)
+	deps.Forecast = a.Forecast
+	onSamples := func(srv *store.Server, s []protocol.MetricsSample) {
+		a.Monitor.OnSamples(srv, s)
+		a.Forecast.OnSamples(srv, s)
+	}
+	a.Fleet.SetHooks(fleet.Hooks{OnSamples: onSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
 
 	tok := make([]byte, 32)
 	if _, err := rand.Read(tok); err != nil {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib, Agents: a.Agents,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib, Agents: a.Agents, Sites: a.Sites, Forecast: a.Forecast,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)
@@ -210,6 +223,8 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 	go func() { defer a.wg.Done(); a.Update.Run(cctx, 45*time.Second, 6*time.Hour) }()
 	a.wg.Add(1)
 	go func() { defer a.wg.Done(); a.Agents.Run(cctx, time.Hour) }()
+	a.wg.Add(1)
+	go func() { defer a.wg.Done(); a.Sites.Run(cctx) }()
 	_ = st.Audit(ctx, "nexus", "core.start", host, map[string]string{"version": Version, "fingerprint": id.Fingerprint})
 	logger.Printf("NEXUS %s ready on http://%s (data %s)", Version, a.Addr, opts.DataDir)
 	return a, nil

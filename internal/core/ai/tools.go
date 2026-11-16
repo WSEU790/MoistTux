@@ -59,6 +59,7 @@ func BuildRegistry() *Registry {
 	r := NewRegistry()
 	registerCommandTools(r)
 	registerKnowledgeTools(r)
+	registerSiteTools(r)
 
 	// ------------------------------------------------------------ fleet (read)
 	r.Add(&Tool{
@@ -569,7 +570,9 @@ func BuildRegistry() *Registry {
 		Name: "apply_security_updates", Risk: RiskMedium, Capability: "packages:apt", Timeout: 46 * time.Minute,
 		Description: "Install pending updates that come from security repositories, then re-check updates to verify.",
 		Describe:    func(map[string]any) string { return "install pending security updates" },
-		Preview:     func(ctx context.Context, env *Env, _ map[string]any) (*Impact, error) { return updatePreview(ctx, env, nil, true) },
+		Preview: func(ctx context.Context, env *Env, _ map[string]any) (*Impact, error) {
+			return updatePreview(ctx, env, nil, true)
+		},
 		Exec: func(ctx context.Context, env *Env, _ map[string]any) (any, error) {
 			var res protocol.ActionResult
 			if err := env.Client.Post(ctx, "/v1/packages/upgrade", protocol.UpgradeRequest{SecurityOnly: true}, &res); err != nil {
@@ -904,12 +907,12 @@ func queryLogs(ctx context.Context, env *Env, unit string, a map[string]any) (an
 // compactLogs collapses repeated messages so the model sees patterns, not noise.
 func compactLogs(lr protocol.LogResult, limit int) map[string]any {
 	type agg struct {
-		msg        string
-		count      int
-		first      time.Time
-		last       time.Time
-		prio       int
-		ident      string
+		msg   string
+		count int
+		first time.Time
+		last  time.Time
+		prio  int
+		ident string
 	}
 	var order []string
 	groups := map[string]*agg{}
@@ -1126,6 +1129,3 @@ func updatePreview(ctx context.Context, env *Env, pkgs []string, securityOnly bo
 	}
 	return imp, nil
 }
-
-
-

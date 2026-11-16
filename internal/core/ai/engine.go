@@ -13,8 +13,10 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
+	"github.com/WSEU790/MoistTux/internal/core/forecast"
 	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"github.com/WSEU790/MoistTux/internal/core/ollama"
+	"github.com/WSEU790/MoistTux/internal/core/sitecheck"
 	"github.com/WSEU790/MoistTux/internal/core/store"
 )
 
@@ -28,6 +30,10 @@ type Deps struct {
 	Policies *PolicyStore
 	// Knowledge is the built-in runbook library (may be nil in tests).
 	Knowledge *knowledge.Library
+	// Sites runs website checks (may be nil in tests).
+	Sites *sitecheck.Runner
+	// Forecast predicts disk-full dates (may be nil in tests).
+	Forecast *forecast.Engine
 }
 
 // ResolveServer accepts an ID, a display name or a hostname.
@@ -164,15 +170,15 @@ func (e *Engine) UpdateSettings(ctx context.Context, s Settings, by string) erro
 // ---------------------------------------------------------------- status & models
 
 type Status struct {
-	Reachable bool         `json:"reachable"`
-	URL       string       `json:"url"`
-	Local     bool         `json:"local"`
-	Version   string       `json:"version,omitempty"`
-	Error     string       `json:"error,omitempty"`
-	Models    int          `json:"models"`
+	Reachable bool             `json:"reachable"`
+	URL       string           `json:"url"`
+	Local     bool             `json:"local"`
+	Version   string           `json:"version,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	Models    int              `json:"models"`
 	Running   []ollama.Running `json:"running"`
-	Roles     []Resolution `json:"roles"`
-	RoleError string       `json:"role_error,omitempty"`
+	Roles     []Resolution     `json:"roles"`
+	RoleError string           `json:"role_error,omitempty"`
 }
 
 func (e *Engine) Status(ctx context.Context) Status {
@@ -632,13 +638,13 @@ func (e *Engine) invoke(ctx context.Context, conv *store.Conversation, tc ollama
 
 // ExecRequest describes one tool invocation from any origin.
 type ExecRequest struct {
-	Tool           *Tool
-	Args           map[string]any
-	Mode           Mode
-	ConversationID string
-	IncidentID     string
-	DefaultServer  string
-	RequestedBy    string // ai | operator | automation
+	Tool              *Tool
+	Args              map[string]any
+	Mode              Mode
+	ConversationID    string
+	IncidentID        string
+	DefaultServer     string
+	RequestedBy       string // ai | operator | automation
 	OperatorConfirmed bool
 }
 

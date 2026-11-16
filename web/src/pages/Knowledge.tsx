@@ -126,11 +126,11 @@ function Commands() {
           {cats.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
-      <Panel title={`${list.length} commands`}>
-        <p className="dim" style={{ marginTop: 0, fontSize: 13 }}>
+      <Panel title={`${list.length} commands`} bodyClass="flush">
+        <p className="dim" style={{ margin: "12px 14px", fontSize: 13 }}>
           The AI runs these with <span className="mono">run_admin_command</span>. Arguments are validated and never pass through a shell. Read-only commands run immediately; changes follow your automation policy, and high-risk ones always need your approval. Anything else needs a shell command that you approve individually.
         </p>
-        <table className="table">
+        <table className="t">
           <thead><tr><th>Command</th><th>Risk</th><th>Runs</th><th>What it does</th></tr></thead>
           <tbody>
             {list.map((c) => (

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
+	"github.com/WSEU790/MoistTux/internal/core/sitecheck"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,6 +143,96 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/agents/upgrade-all", func(w http.ResponseWriter, r *http.Request) {
 		go s.Agents.UpgradeAll(context.Background(), "operator")
 		writeJSON(w, 202, map[string]any{"started": true})
+	})
+	m.HandleFunc("GET /api/checks", func(w http.ResponseWriter, r *http.Request) {
+		out, err := s.Sites.Summaries(r.Context())
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, out)
+	})
+	saveCheck := func(w http.ResponseWriter, r *http.Request, id string) {
+		var req struct {
+			store.SiteCheck
+			Enabled *bool `json:"enabled"`
+		}
+		if err := decode(r, &req); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		c := req.SiteCheck
+		c.Enabled = req.Enabled == nil || *req.Enabled // new checks are on unless switched off
+		c.ID = id
+		if id != "" {
+			old, err := s.Store.GetSiteCheck(r.Context(), id)
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			c.CreatedAt = old.CreatedAt
+		}
+		if _, err := s.Store.GetServer(r.Context(), c.ServerID); err != nil {
+			writeErr(w, 400, errors.New("choose the server that hosts this website"))
+			return
+		}
+		if err := sitecheck.Validate(&c); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := s.Store.PutSiteCheck(r.Context(), &c); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		_ = s.Store.Audit(r.Context(), "operator", "sitecheck.save", c.ID, c)
+		go s.Sites.RunOnce(context.Background(), &c)
+		writeJSON(w, 200, c)
+	}
+	m.HandleFunc("POST /api/checks", func(w http.ResponseWriter, r *http.Request) { saveCheck(w, r, "") })
+	m.HandleFunc("PUT /api/checks/{id}", func(w http.ResponseWriter, r *http.Request) { saveCheck(w, r, r.PathValue("id")) })
+	m.HandleFunc("DELETE /api/checks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Store.GetSiteCheck(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, statusFor(err), err)
+			return
+		}
+		for _, rule := range []string{sitecheck.RuleDown, sitecheck.RuleSlow, sitecheck.RuleCert} {
+			s.Monitor.Clear(r.Context(), c.ServerID, rule, c.ID)
+		}
+		if err := s.Store.DeleteSiteCheck(r.Context(), c.ID); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		_ = s.Store.Audit(r.Context(), "operator", "sitecheck.delete", c.ID, map[string]string{"name": c.Name, "url": c.URL})
+		writeJSON(w, 200, map[string]bool{"deleted": true})
+	})
+	m.HandleFunc("POST /api/checks/{id}/run", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Store.GetSiteCheck(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, 200, s.Sites.RunOnce(r.Context(), c))
+	})
+	m.HandleFunc("GET /api/checks/{id}/results", func(w http.ResponseWriter, r *http.Request) {
+		hours := 24
+		if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= 24*30 {
+			hours = h
+		}
+		res, err := s.Store.SiteResults(r.Context(), r.PathValue("id"), time.Now().Add(-time.Duration(hours)*time.Hour), 50000)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, res)
+	})
+	m.HandleFunc("GET /api/servers/{id}/forecast", func(w http.ResponseWriter, r *http.Request) {
+		fs, err := s.Forecast.Server(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, fs)
 	})
 	m.HandleFunc("GET /api/admin-commands", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, protocol.Catalog) })
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })

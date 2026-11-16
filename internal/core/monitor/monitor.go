@@ -512,3 +512,27 @@ func bytes(b uint64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
+
+// Raise fires (or refreshes) an alert from another subsystem — website
+// checks, disk forecasts, log rules — through the same de-duplication,
+// incident grouping and notification path as the built-in rules.
+func (e *Engine) Raise(ctx context.Context, serverID, rule, subject, severity, title, detail string, evidence any) {
+	srv, err := e.st.GetServer(ctx, serverID)
+	if err != nil {
+		return
+	}
+	e.raise(ctx, srv, condition{rule: rule, subject: subject, severity: severity, title: title, detail: detail, evidence: evidence})
+}
+
+// Clear resolves an alert raised with Raise, if it is firing.
+func (e *Engine) Clear(ctx context.Context, serverID, rule, subject string) {
+	a, err := e.st.FiringAlert(ctx, fingerprint(serverID, rule, subject))
+	if err != nil {
+		return
+	}
+	srv, err := e.st.GetServer(ctx, serverID)
+	if err != nil {
+		return
+	}
+	e.resolve(ctx, srv, a)
+}

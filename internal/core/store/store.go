@@ -305,6 +305,44 @@ var migrations = []string{
 		sealed_key TEXT NOT NULL,
 		created_at INTEGER NOT NULL
 	)`,
+
+	// v4 — website and certificate checks run from NEXUS
+	`CREATE TABLE site_checks (
+		id TEXT PRIMARY KEY,
+		server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		url TEXT NOT NULL,
+		expect_status TEXT NOT NULL DEFAULT '200-399',
+		expect_text TEXT NOT NULL DEFAULT '',
+		interval_sec INTEGER NOT NULL DEFAULT 60,
+		timeout_sec INTEGER NOT NULL DEFAULT 10,
+		fail_threshold INTEGER NOT NULL DEFAULT 2,
+		slow_ms INTEGER NOT NULL DEFAULT 0,
+		cert_warn_days INTEGER NOT NULL DEFAULT 14,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE site_results (
+		check_id TEXT NOT NULL REFERENCES site_checks(id) ON DELETE CASCADE,
+		ts INTEGER NOT NULL,
+		ok INTEGER NOT NULL,
+		status INTEGER NOT NULL DEFAULT 0,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		error TEXT NOT NULL DEFAULT '',
+		cert_expires INTEGER
+	);
+	CREATE INDEX site_results_check_ts ON site_results(check_id, ts);`,
+
+	// v5 — hourly per-filesystem usage for disk-full forecasts
+	`CREATE TABLE fs_usage (
+		server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		mount TEXT NOT NULL,
+		ts INTEGER NOT NULL,
+		used INTEGER NOT NULL,
+		avail INTEGER NOT NULL,
+		total INTEGER NOT NULL,
+		PRIMARY KEY (server_id, mount, ts)
+	) WITHOUT ROWID;`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

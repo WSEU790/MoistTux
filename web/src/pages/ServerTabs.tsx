@@ -412,6 +412,41 @@ function ContainerDrawer({ s, name, onClose, onAction }: { s: Server; name: stri
 
 // ---------------------------------------------------------------- storage
 
+type Forecast = { mount: string; used_pct: number; growth_bytes_per_day: number; days_left?: number; full_at?: string; fit_r2: number; history_hours: number; note?: string };
+
+function DiskForecast({ s }: { s: Server }) {
+  const fc = useFetch<Forecast[]>(`/api/servers/${s.id}/forecast`, [s.id], 300000);
+  if (!fc.data) return null;
+  return (
+    <Panel title="Disk-full forecast" bodyClass="flush">
+      {fc.data.length === 0 ? (
+        <div className="faint" style={{ padding: 14, fontSize: 13 }}>NEXUS records each filesystem's usage hourly. A forecast appears after about a day of history.</div>
+      ) : (
+        <table className="t">
+          <thead><tr><th>Mount</th><th className="r">Used</th><th className="r">Growth / day</th><th>Forecast</th></tr></thead>
+          <tbody>
+            {fc.data.map((f) => (
+              <tr key={f.mount}>
+                <td className="mono">{f.mount}</td>
+                <td className="r mono">{pct(f.used_pct, 0)}</td>
+                <td className="r mono">{f.growth_bytes_per_day > 0 ? "+" + bytes(f.growth_bytes_per_day) : "—"}</td>
+                <td>
+                  {f.days_left != null ? (
+                    <span className={f.days_left <= 3 ? "crit" : f.days_left <= 14 ? "warn" : ""}>
+                      full in ~{f.days_left < 10 ? f.days_left.toFixed(1) : Math.round(f.days_left)} days{f.full_at ? ` (${new Date(f.full_at).toLocaleDateString()})` : ""}
+                    </span>
+                  ) : <span className="faint">{f.note}</span>}
+                  <div className="faint" style={{ fontSize: 11 }}>{Math.round(f.history_hours / 24 * 10) / 10} days of history · fit R² {f.fit_r2.toFixed(2)}</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Panel>
+  );
+}
+
 export function StorageTab({ s }: { s: Server }) {
   const ov = useFetch<any>(agent(s.id, "storage"), [], 30000);
   const [path, setPath] = useState("/");
@@ -424,6 +459,7 @@ export function StorageTab({ s }: { s: Server }) {
   return (
     <div className="col" style={{ gap: 16 }}>
       <ErrorNote error={ov.error} />
+      <DiskForecast s={s} />
       <div className="grid g2">
         <Panel title="Filesystems" bodyClass="flush">
           {!ov.data ? <SkeletonRows /> : (

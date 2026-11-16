@@ -196,12 +196,12 @@ func (h Hardware) Budget() uint64 {
 }
 
 type Recommendation struct {
-	Role     string `json:"role"`
-	Model    string `json:"model"`
-	Approx   string `json:"approx_download"`
-	Why      string `json:"why"`
-	Tools    bool   `json:"tools"`
-	Installed bool  `json:"installed"`
+	Role      string `json:"role"`
+	Model     string `json:"model"`
+	Approx    string `json:"approx_download"`
+	Why       string `json:"why"`
+	Tools     bool   `json:"tools"`
+	Installed bool   `json:"installed"`
 }
 
 // Recommend suggests Ollama library tags sized for this machine. Sizes are

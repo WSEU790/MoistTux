@@ -307,3 +307,42 @@ func registerKnowledgeTools(r *Registry) {
 		},
 	})
 }
+
+func registerSiteTools(r *Registry) {
+	r.Add(&Tool{
+		Name: "forecast_disk_usage", Risk: RiskRead,
+		Description: "Predict when each filesystem of a server will be full, from 14 days of hourly usage history: growth per day, days left, expected full date and how well the trend fits (R²). Use it when disk space is a concern, before clean-ups, and to decide if a disk must be extended.",
+		Exec: func(ctx context.Context, env *Env, _ map[string]any) (any, error) {
+			if env.Deps == nil || env.Deps.Forecast == nil {
+				return nil, errors.New("forecasts unavailable")
+			}
+			fs, err := env.Deps.Forecast.Server(ctx, env.Server.ID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"filesystems": fs, "note": "days_left is omitted when the filesystem is not growing or the history is too short or irregular for a reliable forecast."}, nil
+		},
+	})
+	r.Add(&Tool{
+		Name: "list_website_checks", Fleet: true, Risk: RiskRead,
+		Description: "List the website checks NEXUS runs from the operator's PC (the outside view): URL, hosting server, state up/down, last status code and error, response time, uptime over 24 h and 7 days, and days until the TLS certificate expires.",
+		Exec: func(ctx context.Context, env *Env, _ map[string]any) (any, error) {
+			if env.Deps == nil || env.Deps.Sites == nil {
+				return nil, errors.New("website checks unavailable")
+			}
+			sums, err := env.Deps.Sites.Summaries(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var out []map[string]any
+			for _, s := range sums {
+				row := map[string]any{"name": s.Name, "url": s.URL, "server_id": s.ServerID, "state": s.State, "uptime_24h_pct": s.Uptime24h, "uptime_7d_pct": s.Uptime7d, "avg_response_ms_24h": s.AvgMs24h, "certificate_days_left": s.CertDays}
+				if s.LastResult != nil {
+					row["last_status"], row["last_error"], row["last_checked"] = s.LastResult.Status, s.LastResult.Error, s.LastResult.Time
+				}
+				out = append(out, row)
+			}
+			return map[string]any{"checks": out, "count": len(out)}, nil
+		},
+	})
+}

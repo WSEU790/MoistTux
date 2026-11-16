@@ -67,9 +67,9 @@ type Tool struct {
 	RiskFor func(args map[string]any) Risk
 	// Check validates arguments beyond their types, before any policy or
 	// approval step, so mistakes go straight back to the model.
-	Check func(args map[string]any) error
-	Preview     func(ctx context.Context, env *Env, args map[string]any) (*Impact, error)
-	Describe    func(args map[string]any) string
+	Check    func(args map[string]any) error
+	Preview  func(ctx context.Context, env *Env, args map[string]any) (*Impact, error)
+	Describe func(args map[string]any) string
 }
 
 func fptr(v float64) *float64 { return &v }

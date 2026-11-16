@@ -401,6 +401,22 @@ updates with `events`. Use the components in `components/UI.tsx` and the CSS
 variables in `styles/` so all four themes keep working. Run
 `npm --prefix web run typecheck`.
 
+### Website checks and disk forecasts
+
+* `internal/core/sitecheck`: checks (`site_checks`, results in
+  `site_results`, 30 days) run from the NEXUS PC with normal certificate
+  verification. An expired or untrusted certificate is still read for its
+  expiry date. Alerts go through `monitor.Raise`/`Clear` (rules `site_down`,
+  `site_slow`, `site_certificate`) on the hosting server.
+* `internal/core/forecast`: hourly per-mount `used`/`avail` in `fs_usage`
+  (90 days). A least-squares fit over 14 days gives growth per day and days
+  until `avail` reaches 0, but only when R² ≥ 0.6 and growth is meaningful.
+  It raises rule `disk_forecast` at ≤14 days (warning) and ≤3 days
+  (critical).
+* Other subsystems should raise alerts the same way: `monitor.Raise(ctx,
+  serverID, rule, subject, severity, title, detail, evidence)` gives them
+  de-duplication, incidents and notifications.
+
 ### Add an alert rule
 
 Rules are in `internal/core/monitor/monitor.go`. They are deterministic: a
