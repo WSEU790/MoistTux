@@ -343,6 +343,23 @@ var migrations = []string{
 		total INTEGER NOT NULL,
 		PRIMARY KEY (server_id, mount, ts)
 	) WITHOUT ROWID;`,
+
+	// v6 — scheduled maintenance jobs and their runs
+	`CREATE TABLE maintenance_jobs (
+		id TEXT PRIMARY KEY,
+		server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+		json TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);
+	CREATE TABLE maintenance_runs (
+		id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL REFERENCES maintenance_jobs(id) ON DELETE CASCADE,
+		server_id TEXT NOT NULL,
+		started INTEGER NOT NULL,
+		status TEXT NOT NULL,
+		json TEXT NOT NULL
+	);
+	CREATE INDEX maintenance_runs_job ON maintenance_runs(job_id, started);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
