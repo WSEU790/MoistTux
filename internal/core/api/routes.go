@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
 	"net/http"
 	"net/url"
 	"os"
@@ -119,6 +120,27 @@ func (s *Server) routes(m *http.ServeMux) {
 			return
 		}
 		writeJSON(w, 200, d)
+	})
+	m.HandleFunc("GET /api/agents", func(w http.ResponseWriter, r *http.Request) {
+		st, err := s.Agents.Status(r.Context())
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"agents": st, "settings": s.Agents.Settings()})
+	})
+	m.HandleFunc("POST /api/servers/{id}/agent-upgrade", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, err := s.Store.GetServer(r.Context(), id); err != nil {
+			writeErr(w, statusFor(err), err)
+			return
+		}
+		go func() { _ = s.Agents.Upgrade(context.Background(), id, "operator") }()
+		writeJSON(w, 202, map[string]any{"started": true})
+	})
+	m.HandleFunc("POST /api/agents/upgrade-all", func(w http.ResponseWriter, r *http.Request) {
+		go s.Agents.UpgradeAll(context.Background(), "operator")
+		writeJSON(w, 202, map[string]any{"started": true})
 	})
 	m.HandleFunc("GET /api/admin-commands", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, protocol.Catalog) })
 	m.HandleFunc("GET /api/deploy/agents", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, agentbin.Available()) })
@@ -789,6 +811,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, a)
 	case "updates":
 		writeJSON(w, 200, s.Update.Status().Settings)
+	case "agents":
+		writeJSON(w, 200, s.Agents.Settings())
 	case "notifications":
 		c := s.Notifier.Config()
 		var f notifyForm
@@ -871,6 +895,18 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.Update.SetSettings(us)
 		_ = s.Store.Audit(ctx, "operator", "settings.updates", "updates", us)
 		writeJSON(w, 200, us)
+	case "agents":
+		var as agentupdate.Settings
+		if err := decode(r, &as); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := s.Agents.SetSettings(ctx, as); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		_ = s.Store.Audit(ctx, "operator", "settings.agents", "agents", as)
+		writeJSON(w, 200, as)
 	case "notifications":
 		var f notifyForm
 		if err := decode(r, &f); err != nil {

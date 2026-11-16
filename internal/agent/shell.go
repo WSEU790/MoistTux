@@ -105,17 +105,23 @@ func verifyGrant(g *protocol.ShellGrant, raw []byte, sig, signersPath string, no
 }
 
 func verifyGrantFor(g *protocol.ShellGrant, raw []byte, sig, signersPath, machineIDPath string, now time.Time) error {
-	if now.Unix() > g.Expires {
+	return verifySigned(raw, sig, g.MachineID, g.Expires, signersPath, machineIDPath, now)
+}
+
+// verifySigned checks a grant signed by a trusted NEXUS core: expiry (at most
+// ten minutes ahead), the target machine and the signature.
+func verifySigned(raw []byte, sig, machineID string, expires int64, signersPath, machineIDPath string, now time.Time) error {
+	if now.Unix() > expires {
 		return errors.New("refused: the approval grant has expired")
 	}
-	if g.Expires-now.Unix() > 600 {
+	if expires-now.Unix() > 600 {
 		return errors.New("refused: the approval grant is valid for too long")
 	}
 	mid, err := os.ReadFile(machineIDPath)
 	if err != nil || strings.TrimSpace(string(mid)) == "" {
 		return errors.New("refused: /etc/machine-id is unavailable, so the grant cannot be bound to this server")
 	}
-	if strings.TrimSpace(string(mid)) != g.MachineID {
+	if strings.TrimSpace(string(mid)) != machineID {
 		return errors.New("refused: the grant was issued for a different server")
 	}
 	keys, err := loadSigners(signersPath)

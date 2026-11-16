@@ -558,6 +558,24 @@ same reason, the end-to-end test's real `apt-get update` can take minutes on
 CI; the test allows for that. `make installer` still works locally with
 Linux NSIS.
 
+**Agent upgrades** (`internal/core/agentupdate`, `internal/agent/upgrade.go`):
+1. An agent whose version differs from the bundled one is outdated: the
+   Fleet banner offers *Upgrade all*, the server's settings *Upgrade agent*,
+   and Settings → Updates can enable automatic upgrades (hourly).
+2. NEXUS uploads the bundled binary to `POST /v1/self-upgrade` with an
+   `UpgradeGrant` {machine-id, SHA-256, version, nonce, expiry} signed by its
+   identity key.
+3. The root helper copies the upload into `/var/lib/nexus-helper/upgrade`,
+   hashes the copy, and verifies the grant against `shell-signers`.
+4. It runs the new binary's `install --upgrade`, which keeps the listen
+   address and interval and restarts through a 3-second `systemd-run` timer,
+   so the reply reaches NEXUS.
+5. NEXUS waits for the new version, audits the upgrade, and treats a dropped
+   reply as "check the version".
+
+Agents older than the feature, or that do not trust the key yet, report
+"needs Upgrade/repair over SSH once".
+
 **How installed copies update** (`internal/core/update`): at start-up (after
 45 s) and every 6 hours, NEXUS fetches `releases/latest` from GitHub. It
 downloads `nexus-update.json` and `.sig` and verifies the ed25519 signature

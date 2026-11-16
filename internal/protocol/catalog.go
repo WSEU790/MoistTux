@@ -400,6 +400,24 @@ type ShellRunRequest struct {
 	Sig   string `json:"sig"`   // base64 ECDSA-SHA256 (ASN.1) signature over the decoded token
 }
 
+// SelfUpgradeRequest is POST /v1/self-upgrade: a new agent binary and a grant
+// signed by the core for exactly that binary on this server.
+type SelfUpgradeRequest struct {
+	Binary string `json:"binary"` // base64
+	Grant  string `json:"grant"`  // base64 JSON UpgradeGrant
+	Sig    string `json:"sig"`
+}
+
+// UpgradeGrant authorizes installing one agent binary on one server.
+type UpgradeGrant struct {
+	V         int    `json:"v"`
+	MachineID string `json:"machine_id"`
+	SHA256    string `json:"sha256"`
+	Version   string `json:"version"`
+	Nonce     string `json:"nonce"`
+	Expires   int64  `json:"exp"`
+}
+
 // ShellGrant authorizes one shell command on one agent.
 type ShellGrant struct {
 	V          int    `json:"v"`

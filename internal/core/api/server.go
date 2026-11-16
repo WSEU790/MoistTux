@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
 	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"io"
 	"io/fs"
@@ -33,6 +34,7 @@ import (
 
 type Server struct {
 	Knowledge   *knowledge.Library
+	Agents      *agentupdate.Manager
 	Store       *store.Store
 	Bus         *events.Bus
 	Fleet       *fleet.Manager

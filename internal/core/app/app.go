@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/WSEU790/MoistTux/internal/core/agentupdate"
 	"io"
 	"log"
 	"net"
@@ -62,6 +63,7 @@ type App struct {
 	Update    *update.Updater
 	AI        *ai.Engine
 	Knowledge *knowledge.Library
+	Agents    *agentupdate.Manager
 	API       *api.Server
 	opts      Options
 	Log       *log.Logger
@@ -174,6 +176,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		a.AI.Investigate(ctx, inc)
 	})
 	a.Fleet.SetDialers(tunnel.NewManager(st, prot, logger))
+	a.Agents = agentupdate.New(a.Fleet, st, a.Bus, logger, Version)
 	a.Deploy = deploy.NewManager(a.Fleet, st, a.Bus, prot, logger)
 	a.Fleet.SetHooks(fleet.Hooks{OnSamples: a.Monitor.OnSamples, OnInventory: a.Monitor.OnInventory, OnStatus: a.Monitor.OnStatus, OnReboot: a.Monitor.OnReboot})
 
@@ -182,7 +185,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib, Agents: a.Agents,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)
@@ -205,6 +208,8 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 	go func() { defer a.wg.Done(); _ = a.srv.Serve(ln) }()
 	go func() { defer a.wg.Done(); a.maintenance(cctx) }()
 	go func() { defer a.wg.Done(); a.Update.Run(cctx, 45*time.Second, 6*time.Hour) }()
+	a.wg.Add(1)
+	go func() { defer a.wg.Done(); a.Agents.Run(cctx, time.Hour) }()
 	_ = st.Audit(ctx, "nexus", "core.start", host, map[string]string{"version": Version, "fingerprint": id.Fingerprint})
 	logger.Printf("NEXUS %s ready on http://%s (data %s)", Version, a.Addr, opts.DataDir)
 	return a, nil

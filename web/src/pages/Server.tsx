@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { AgentVersionRow } from "./AgentUpdates";
 import { navigate, useApp, useFetch } from "../lib/state";
 import { api } from "../lib/api";
 import { Icon } from "../components/Icon";
@@ -373,6 +374,7 @@ function EditServer({ s, onClose }: { s: Server; onClose: () => void }) {
           </div>
           <button className="btn" onClick={() => setUpgrading(true)}><Icon name="download" /> Upgrade…</button>
         </div>
+        <AgentVersionRow serverId={s.id} />
         <SavedLogin serverId={s.id} />
         <div className="row">
           <div className="grow">

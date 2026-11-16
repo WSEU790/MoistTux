@@ -37,6 +37,9 @@ type InstallOptions struct {
 	// commands (written to ShellSignersPath, root-owned).
 	ShellSigner      string
 	ShellSignerLabel string
+	// Upgrade: restart without waiting (the caller runs inside the service
+	// being restarted) and do not issue a new enrollment code.
+	Upgrade bool
 }
 
 func step(out io.Writer, format string, a ...any) { fmt.Fprintf(out, "  • "+format+"\n", a...) }
@@ -150,12 +153,33 @@ func Install(opts InstallOptions) error {
 		return err
 	}
 	step(out, "systemd unit %s", UnitPath)
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", "nexus-agent.service"}, {"restart", "nexus-agent.service"}} {
+	steps := [][]string{{"daemon-reload"}, {"enable", "nexus-agent.service"}}
+	if !opts.Upgrade {
+		steps = append(steps, []string{"restart", "nexus-agent.service"})
+	}
+	for _, args := range steps {
 		if r := runCmd(ctx, time.Minute, nil, "systemctl", args...); r.ExitCode != 0 {
 			return fmt.Errorf("systemctl %s: %s", strings.Join(args, " "), strings.TrimSpace(r.Stderr))
 		}
 	}
+	if opts.Upgrade {
+		// The upgrade runs inside the service being restarted: restart a few
+		// seconds later from a transient timer, so the agent can answer NEXUS
+		// and the helper can finish first.
+		unit := fmt.Sprintf("nexus-agent-restart-%d", time.Now().Unix())
+		r := runCmd(ctx, time.Minute, nil, "systemd-run", "--unit="+unit, "--on-active=3", "--timer-property=AccuracySec=100ms", "--collect", "systemctl", "restart", "nexus-agent.service")
+		if r.ExitCode != 0 {
+			r = runCmd(ctx, time.Minute, nil, "systemctl", "restart", "--no-block", "nexus-agent.service")
+		}
+		if r.ExitCode != 0 {
+			return fmt.Errorf("scheduling the restart: %s", strings.TrimSpace(r.Stderr))
+		}
+	}
 	step(out, "service enabled and started")
+	if opts.Upgrade {
+		_ = chownTree(DefaultState, uid, gid)
+		return nil
+	}
 
 	code, err := st.NewEnrollmentCode(24 * time.Hour)
 	if err != nil {

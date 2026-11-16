@@ -121,6 +121,10 @@ func ValidateHelperArgs(op string, args []string) error {
 		if len(args) != 2 || len(args[0]) > 64<<10 || len(args[1]) > 1024 {
 			return helperUsage(op)
 		}
+	case "self-upgrade":
+		if len(args) != 3 || !filepath.IsAbs(args[0]) || filepath.Clean(args[0]) != args[0] || len(args[1]) > 8<<10 || len(args[2]) > 1024 {
+			return helperUsage(op)
+		}
 	default:
 		return fmt.Errorf("helper: unknown operation %q", op)
 	}
@@ -183,6 +187,8 @@ func ExecHelper(ctx context.Context, op string, args []string) (any, error) {
 		return runCmd(ctx, time.Duration(c.TimeoutSec)*time.Second, c.Env, argv[0], argv[1:]...), nil
 	case "shell":
 		return execShellGrant(ctx, args[0], args[1])
+	case "self-upgrade":
+		return execSelfUpgrade(ctx, args[0], args[1], args[2])
 	case "systemctl":
 		return runCmd(ctx, 2*time.Minute, nil, "systemctl", "--no-ask-password", args[0], args[1]), nil
 	case "apt-update":

@@ -51,12 +51,22 @@ func lookPath(name string) (string, error) {
 
 // runCmd executes a fixed binary with discrete arguments (never a shell).
 func runCmd(ctx context.Context, timeout time.Duration, env []string, name string, args ...string) protocol.CommandResult {
-	res := protocol.CommandResult{Command: name + " " + strings.Join(args, " "), ExitCode: -1}
 	path, err := lookPath(name)
 	if err != nil {
-		res.Stderr = err.Error()
-		return res
+		return protocol.CommandResult{Command: name + " " + strings.Join(args, " "), ExitCode: -1, Stderr: err.Error()}
 	}
+	return runResolved(ctx, timeout, env, name, path, args...)
+}
+
+// runCmdPath runs a binary by absolute path (used only by the root helper for
+// a verified agent upgrade).
+func runCmdPath(ctx context.Context, timeout time.Duration, path string, args ...string) protocol.CommandResult {
+	return runResolved(ctx, timeout, nil, path, path, args...)
+}
+
+func runResolved(ctx context.Context, timeout time.Duration, env []string, name, path string, args ...string) protocol.CommandResult {
+	res := protocol.CommandResult{Command: name + " " + strings.Join(args, " "), ExitCode: -1}
+	var err error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)

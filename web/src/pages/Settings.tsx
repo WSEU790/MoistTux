@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AgentAutoUpgradeSwitch } from "./AgentUpdates";
 import { api } from "../lib/api";
 import { navigate, useApp, useFetch } from "../lib/state";
 import { Icon } from "../components/Icon";
@@ -530,6 +531,7 @@ function Updates() {
         <div className="col" style={{ gap: 12 }}>
           <Switch on={s.settings.auto_check} onChange={(v) => saveSettings({ auto_check: v })} label="Check for updates automatically (at start-up and every 6 hours)" />
           <Switch on={s.settings.auto_install} onChange={(v) => saveSettings({ auto_install: v })} label="Install downloaded updates automatically the next time NEXUS starts" />
+          <AgentAutoUpgradeSwitch />
           <Notice icon="lock">Updates come from this project's GitHub releases. NEXUS installs one only if its manifest is signed with the project's release key (built into this app) and the installer matches the signed SHA-256. Your servers, history and keys in %LOCALAPPDATA%\NEXUS are kept.</Notice>
         </div>
       </Panel>

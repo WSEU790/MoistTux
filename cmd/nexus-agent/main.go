@@ -77,9 +77,10 @@ func main() {
 		docker := fs.Bool("docker", false, "grant Docker access (adds the service user to the docker group, which is root-equivalent)")
 		signer := fs.String("shell-signer", "", "base64 public key of a NEXUS installation allowed to run person-approved shell commands")
 		signerLabel := fs.String("shell-signer-label", "nexus", "label for --shell-signer")
+		upgrade := fs.Bool("upgrade", false, "in-place upgrade from NEXUS: restart without waiting, no new enrollment code")
 		interval := fs.Duration("interval", 5*time.Second, "telemetry sampling interval")
 		_ = fs.Parse(args)
-		if err := agent.Install(agent.InstallOptions{Listen: *listen, Docker: *docker, Interval: *interval, Out: os.Stdout, ShellSigner: *signer, ShellSignerLabel: *signerLabel}); err != nil {
+		if err := agent.Install(agent.InstallOptions{Listen: *listen, Docker: *docker, Interval: *interval, Out: os.Stdout, ShellSigner: *signer, ShellSignerLabel: *signerLabel, Upgrade: *upgrade}); err != nil {
 			fatal(err)
 		}
 	case "enroll-code":

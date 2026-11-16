@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { Icon } from "../components/Icon";
 import { Bar, Copy, Empty, ErrorNote, Modal, Notice, Panel, SkeletonRows, StatusDot, Tabs, useSort } from "../components/UI";
 import { SSHDeploy } from "./SSHDeploy";
+import { AgentUpdateBanner } from "./AgentUpdates";
 import { Ring, Sparkline } from "../components/Charts";
 import { ago, duration, levelClass, maxFS, pct, statusClass } from "../lib/format";
 import type { Server } from "../lib/types";
@@ -55,6 +56,7 @@ export function Fleet() {
           <Icon name="plus" /> Add server
         </button>
       </div>
+      <AgentUpdateBanner />
       <div className="row wrap" style={{ marginBottom: 14 }}>
         <div className="row" style={{ position: "relative" }}>
           <Icon name="search" size={14} style={{ position: "absolute", left: 10, color: "var(--text-3)" }} />
