@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -431,6 +432,16 @@ func TestCallbackRobustness(t *testing.T) {
 	m.cbSrv = nil
 	m.mu.Unlock()
 	srv.Close() // the process "exits"
+	// Wait until the port is really free (Serve goroutines may still hold it).
+	pu4, _ := url.Parse(u4)
+	ru, _ := url.Parse(pu4.Query().Get("redirect_uri"))
+	for i := 0; i < 100; i++ {
+		if ln, err := net.Listen("tcp", ru.Host); err == nil {
+			ln.Close()
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	m2 := New(st, mustKey(t, dir), nil)
 	m2.SetEndpoints(m.ep)
 	if s := m2.Status(); s.Flow != "waiting" || !s.Listening {
