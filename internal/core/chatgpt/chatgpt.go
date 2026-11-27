@@ -88,16 +88,20 @@ var ErrNotLinked = errors.New("no ChatGPT account is linked: open Settings → A
 
 // record is persisted under "ai.chatgpt". Tokens are sealed.
 type record struct {
-	HostID      string    `json:"host_id"`
-	ClientID    string    `json:"client_id,omitempty"` // issued oaiapp_… ID
-	Subject     string    `json:"subject,omitempty"`
-	Email       string    `json:"email,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Scopes      []string  `json:"scopes,omitempty"`
-	Sealed      string    `json:"tokens_sealed,omitempty"`
-	LinkedAt    time.Time `json:"linked_at,omitzero"`
-	WelcomeSeen bool      `json:"welcome_seen,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	HostID   string `json:"host_id"`
+	ClientID string `json:"client_id,omitempty"` // issued oaiapp_… ID
+	// PendingClientID is a client ID issued by a registration whose code
+	// exchange has not succeeded yet; it is reused instead of registering
+	// NEXUS again (OpenAI: retain the issued client ID before exchanging).
+	PendingClientID string    `json:"pending_client_id,omitempty"`
+	Subject         string    `json:"subject,omitempty"`
+	Email           string    `json:"email,omitempty"`
+	Name            string    `json:"name,omitempty"`
+	Scopes          []string  `json:"scopes,omitempty"`
+	Sealed          string    `json:"tokens_sealed,omitempty"`
+	LinkedAt        time.Time `json:"linked_at,omitzero"`
+	WelcomeSeen     bool      `json:"welcome_seen,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
 }
 
 type tokens struct {
@@ -116,7 +120,8 @@ type attempt struct {
 	Redirect string    `json:"redirect"`
 	ClientID string    `json:"client_id"` // dynamic_agent_client or the issued ID
 	AuthURL  string    `json:"auth_url"`
-	NewReg   bool      `json:"new_registration"`
+	NewReg   bool      `json:"new_registration"` // completing a registration (new or pending client)
+	Retry    int       `json:"retry,omitempty"`
 	Expires  time.Time `json:"expires"`
 }
 
@@ -287,6 +292,8 @@ func newHostID() string {
 type BeginOptions struct {
 	NewAccount bool // register another ChatGPT account (replaces the current one once validated)
 	Reconsent  bool // ask again for ChatGPT plan permission after it was declined
+
+	retryClient string // internal: finish a registration with this issued client
 }
 
 // Begin starts a sign-in: it makes sure the loopback callback server is
@@ -305,19 +312,42 @@ func (m *Manager) Begin(ctx context.Context, opt BeginOptions) (string, error) {
 			return "", err
 		}
 	}
+	a, err := m.beginLocked(opt, 0)
+	if err != nil {
+		m.mu.Unlock()
+		return "", err
+	}
+	m.mu.Unlock()
+	m.logf("chatgpt: sign-in started; waiting for the browser at %s", a.Redirect)
+	m.expireLater(a)
+	if m.OpenBrowser != nil {
+		m.OpenBrowser(a.AuthURL)
+	}
+	m.changed()
+	return a.AuthURL, nil
+}
+
+// beginLocked creates a sign-in attempt; the caller holds m.mu.
+func (m *Manager) beginLocked(opt BeginOptions, retry int) (*attempt, error) {
 	m.pruneLocked()
 	port, err := m.ensureServerLocked(preferredPort, true)
 	if err != nil {
-		m.mu.Unlock()
-		return "", fmt.Errorf("cannot open the sign-in callback listener on this PC: %w", err)
+		return nil, fmt.Errorf("cannot open the sign-in callback listener on this PC: %w", err)
 	}
-	a := &attempt{
+	a := &attempt{Retry: retry,
 		State: randToken(32), Nonce: randToken(32), Verifier: randToken(48),
 		Redirect: fmt.Sprintf("http://127.0.0.1:%d%s", port, callbackPath),
 		ClientID: m.rec.ClientID, Expires: m.now().Add(attemptTTL),
 	}
-	if a.ClientID == "" || opt.NewAccount {
+	switch {
+	case opt.retryClient != "":
+		a.ClientID, a.NewReg = opt.retryClient, true
+	case opt.NewAccount || (a.ClientID == "" && m.rec.PendingClientID == ""):
 		a.ClientID, a.NewReg = dynamicClient, true
+	case a.ClientID == "":
+		// A registration was issued but its code exchange failed: finish it
+		// with the issued client instead of registering NEXUS again.
+		a.ClientID, a.NewReg = m.rec.PendingClientID, true
 	}
 	sum := sha256.Sum256([]byte(a.Verifier))
 	q := url.Values{
@@ -326,7 +356,7 @@ func (m *Manager) Begin(ctx context.Context, opt BeginOptions) (string, error) {
 		"state": {a.State}, "nonce": {a.Nonce},
 		"code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])},
 	}
-	if a.NewReg {
+	if a.ClientID == dynamicClient {
 		q.Set("agent_name_hint", AgentName)
 	} else {
 		if m.tok != nil && m.tok.ID != "" {
@@ -343,9 +373,10 @@ func (m *Manager) Begin(ctx context.Context, opt BeginOptions) (string, error) {
 	m.attempts[a.State], m.latest = a, a
 	m.flowState, m.flowErr = "waiting", ""
 	m.persistPendingLocked()
-	m.mu.Unlock()
-	m.logf("chatgpt: sign-in started; waiting for the browser at %s", a.Redirect)
+	return a, nil
+}
 
+func (m *Manager) expireLater(a *attempt) {
 	go func() {
 		time.Sleep(attemptTTL + time.Second)
 		m.mu.Lock()
@@ -361,11 +392,6 @@ func (m *Manager) Begin(ctx context.Context, opt BeginOptions) (string, error) {
 			m.changed()
 		}
 	}()
-	if m.OpenBrowser != nil {
-		m.OpenBrowser(a.AuthURL)
-	}
-	m.changed()
-	return a.AuthURL, nil
 }
 
 func (m *Manager) logf(format string, args ...any) {
@@ -527,7 +553,13 @@ func page(w http.ResponseWriter, code int, title, msg string) {
 
 func (m *Manager) callback(w http.ResponseWriter, r *http.Request) {
 	m.logf("chatgpt: sign-in callback received")
-	title, msg, err := m.finish(r.URL.Query())
+	title, msg, next, err := m.finish(r.URL.Query())
+	if next != "" {
+		// The one-time code could not be redeemed: go straight back to
+		// OpenAI with the issued client for a fresh code.
+		http.Redirect(w, r, next, http.StatusFound)
+		return
+	}
 	code := http.StatusOK
 	if errors.Is(err, errUnknownState) {
 		code = http.StatusBadRequest
@@ -559,7 +591,13 @@ func (m *Manager) CompleteFromURL(raw string) error {
 	if u.Path != "" && u.Path != callbackPath && u.Host != "" {
 		return errors.New("that address is not the NEXUS sign-in callback; copy it from the tab that says the site can't be reached")
 	}
-	_, msg, err := m.finish(q)
+	_, msg, next, err := m.finish(q)
+	if next != "" {
+		if m.OpenBrowser != nil {
+			m.OpenBrowser(next)
+		}
+		return errors.New("that sign-in code had already expired; NEXUS opened a fresh sign-in in your browser (approve it once more). If no browser window opened, choose Continue with ChatGPT again")
+	}
 	if err != nil {
 		return err
 	}
@@ -571,7 +609,7 @@ func (m *Manager) CompleteFromURL(raw string) error {
 
 // finish validates a callback and completes the sign-in. It returns the
 // title and message for the browser page.
-func (m *Manager) finish(q url.Values) (string, string, error) {
+func (m *Manager) finish(q url.Values) (string, string, string, error) {
 	m.mu.Lock()
 	var a *attempt
 	for k, x := range m.attempts {
@@ -586,7 +624,7 @@ func (m *Manager) finish(q url.Values) (string, string, error) {
 	m.mu.Unlock()
 	if a == nil {
 		m.logf("chatgpt: callback with an unknown or expired state")
-		return "Sign-in not recognised", "This sign-in is not one NEXUS is waiting for: it may have expired or been cancelled. Start again from NEXUS.", errUnknownState
+		return "Sign-in not recognised", "This sign-in is not one NEXUS is waiting for: it may have expired or been cancelled. Start again from NEXUS.", "", errUnknownState
 	}
 	done := func(state, msg string) {
 		m.mu.Lock()
@@ -605,40 +643,67 @@ func (m *Manager) finish(q url.Values) (string, string, error) {
 	if e := q.Get("error"); e != "" {
 		if e == "access_denied" {
 			done("declined", "You declined access in the browser.")
-			return "ChatGPT was not linked", "You declined access. NEXUS keeps using its current AI engine. You can try again from Settings → AI engine.", nil
+			return "ChatGPT was not linked", "You declined access. NEXUS keeps using its current AI engine. You can try again from Settings → AI engine.", "", nil
 		}
 		msg := e
 		if d := q.Get("error_description"); d != "" {
 			msg += ": " + d
 		}
 		done("failed", "ChatGPT sign-in failed: "+msg)
-		return "Sign-in failed", msg, nil
+		return "Sign-in failed", msg, "", nil
 	}
 	clientID := a.ClientID
-	if cb := q.Get("client_id"); a.NewReg {
+	if cb := q.Get("client_id"); a.NewReg && a.ClientID == dynamicClient {
 		if cb == "" || cb == dynamicClient {
 			done("failed", "The registration did not complete (no client ID was returned).")
-			return "Sign-in incomplete", "ChatGPT did not return a registration for NEXUS. Start again from NEXUS.", errors.New("the registration did not complete (no client ID was returned)")
+			return "Sign-in incomplete", "ChatGPT did not return a registration for NEXUS. Start again from NEXUS.", "", errors.New("the registration did not complete (no client ID was returned)")
 		}
 		clientID = cb
+		// Keep the issued client before exchanging the one-time code, so a
+		// failed exchange does not register NEXUS a second time.
+		m.mu.Lock()
+		m.rec.PendingClientID = cb
+		_ = m.saveLocked(context.Background())
+		m.mu.Unlock()
 	} else if cb != "" && cb != a.ClientID {
 		done("failed", "ChatGPT returned a different app registration; the sign-in was rejected.")
-		return "Sign-in rejected", "ChatGPT returned a different app registration than the one NEXUS asked for.", errors.New("ChatGPT returned a different app registration")
+		return "Sign-in rejected", "ChatGPT returned a different app registration than the one NEXUS asked for.", "", errors.New("ChatGPT returned a different app registration")
 	}
 	code := q.Get("code")
 	if code == "" {
 		done("failed", "No authorization code was returned.")
-		return "Sign-in failed", "No authorization code was returned.", errors.New("no authorization code was returned")
+		return "Sign-in failed", "No authorization code was returned.", "", errors.New("no authorization code was returned")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if err := m.complete(ctx, a, clientID, code, q.Get("scope")); err != nil {
 		m.logf("chatgpt: sign-in failed: %v", err)
+		var oe *OAuthError
+		if errors.As(err, &oe) && oe.Code == "invalid_grant" && a.Retry < 1 {
+			// OpenAI: discard the code and authorize again with the issued
+			// client ID. Once, so a persistent problem cannot loop.
+			opt := BeginOptions{}
+			if a.NewReg {
+				opt.retryClient = clientID
+			}
+			m.mu.Lock()
+			na, berr := m.beginLocked(opt, a.Retry+1)
+			m.mu.Unlock()
+			if berr == nil {
+				m.logf("chatgpt: the code was not accepted (invalid_grant); retrying the authorization with client %s", clientID)
+				m.expireLater(na)
+				m.changed()
+				return "", "", na.AuthURL, nil
+			}
+		}
+		if oe != nil && oe.Code == "invalid_grant" {
+			err = fmt.Errorf("%w. OpenAI did not accept the one-time sign-in code. Return to NEXUS and choose Continue with ChatGPT once more: NEXUS kept the registration, so it will not ask you to set it up again", err)
+		}
 		done("failed", err.Error())
-		return "Sign-in failed", err.Error(), err
+		return "Sign-in failed", err.Error(), "", err
 	}
 	done("done", "")
-	return "ChatGPT is linked to NEXUS", "You can close this window and return to NEXUS.", nil
+	return "ChatGPT is linked to NEXUS", "You can close this window and return to NEXUS.", "", nil
 }
 
 type tokenResponse struct {
@@ -695,6 +760,11 @@ func (m *Manager) tokenRequest(ctx context.Context, form url.Values) (*tokenResp
 			code, e.Description = obj.Code, obj.Message
 		}
 		oe.Code, oe.Description = code, strings.TrimSpace(e.Description+" "+e.Detail)
+		if oe.Code == "" && oe.Description == "" {
+			oe.Description = strings.TrimSpace(string(body))
+		}
+		// Error bodies carry no credentials; keep them for diagnosis.
+		m.logf("chatgpt: token endpoint HTTP %d (%s): %.400s", resp.StatusCode, form.Get("grant_type"), strings.TrimSpace(string(body)))
 		return nil, oe
 	}
 	var tr tokenResponse
@@ -734,6 +804,7 @@ func (m *Manager) complete(ctx context.Context, a *attempt, clientID, code, cbSc
 		m.rec.WelcomeSeen = false // a new account gets the first-use notice
 	}
 	m.rec.ClientID, m.rec.Subject, m.rec.Email, m.rec.Name = clientID, claims.Subject, claims.Email, claims.Name
+	m.rec.PendingClientID = ""
 	m.rec.Scopes, m.rec.LinkedAt, m.rec.LastError = scopes, m.now().UTC(), ""
 	m.tok = &tokens{Access: tr.AccessToken, Refresh: tr.RefreshToken, ID: tr.IDToken, Expiry: m.now().Add(time.Duration(max(tr.ExpiresIn, 60)) * time.Second)}
 	m.limitedAt = time.Time{}

@@ -42,6 +42,7 @@ type fakeAuth struct {
 	sub, email    string
 	refreshCount  int
 	refreshFailAs string // error code for the next refresh
+	failExchange  int    // reject this many code exchanges with invalid_grant
 	lastAuthorize url.Values
 }
 
@@ -85,6 +86,11 @@ func newFakeAuth(t *testing.T) *fakeAuth {
 		case "authorization_code":
 			ar, ok := f.codes[r.Form.Get("code")]
 			delete(f.codes, r.Form.Get("code"))
+			if f.failExchange > 0 {
+				f.failExchange--
+				fail("invalid_grant")
+				return
+			}
 			sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
 			if !ok || base64.RawURLEncoding.EncodeToString(sum[:]) != ar.challenge || r.Form.Get("redirect_uri") != ar.redirect || r.Form.Get("client_id") != f.issued {
 				fail("invalid_grant")
@@ -456,5 +462,81 @@ func TestCallbackRobustness(t *testing.T) {
 	m2.mu.Unlock()
 	if n != 0 {
 		t.Errorf("%d attempts left after sign-in", n)
+	}
+}
+
+// OpenAI sometimes does not redeem a fresh code after registration
+// (invalid_grant). NEXUS keeps the issued client, sends the browser straight
+// back for a new code once, and finishes the registration with it.
+func TestInvalidGrantRetry(t *testing.T) {
+	f := newFakeAuth(t)
+	defer f.srv.Close()
+	m, _, _ := newManager(t, f)
+	ctx := context.Background()
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	f.failExchange = 1
+	u, _ := m.Begin(ctx, BeginOptions{})
+	resp, err := noFollow.Get(f.approve(t, u, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected a redirect for a fresh code, got %d", resp.StatusCode)
+	}
+	next := resp.Header.Get("Location")
+	nq, _ := url.Parse(next)
+	if nq.Query().Get("client_id") != "oaiapp_test123" || nq.Query().Get("agent_name_hint") != "" || !strings.HasPrefix(next, f.srv.URL+"/authorize") {
+		t.Fatalf("retry authorization: %s", next)
+	}
+	m.mu.Lock()
+	pending := m.rec.PendingClientID
+	m.mu.Unlock()
+	if pending != "oaiapp_test123" {
+		t.Fatalf("issued client not kept before the exchange: %q", pending)
+	}
+	if s := m.Status(); s.Flow != "waiting" {
+		t.Fatalf("flow during retry: %+v", s)
+	}
+	// The browser follows the redirect; OpenAI returns a fresh code (no client_id on reauthorization).
+	if code, body := f.browse(t, next, func(cb url.Values) { cb.Del("client_id") }); code != 200 || !strings.Contains(body, "linked") {
+		t.Fatalf("after retry: %d %s", code, body)
+	}
+	s := waitFlow(t, m, "done")
+	if !s.Linked || !s.Registered || s.WelcomeSeen {
+		t.Fatalf("status: %+v", s)
+	}
+	m.mu.Lock()
+	pending, cid := m.rec.PendingClientID, m.rec.ClientID
+	m.mu.Unlock()
+	if pending != "" || cid != "oaiapp_test123" {
+		t.Fatalf("registration not finished: pending %q client %q", pending, cid)
+	}
+
+	// Twice in a row: no loop; a clear message, and the next sign-in reuses the issued client.
+	m.SignOut(ctx)
+	m.mu.Lock()
+	m.rec.ClientID, m.rec.Subject = "", "" // as if never registered
+	m.mu.Unlock()
+	f.failExchange = 2
+	u, _ = m.Begin(ctx, BeginOptions{})
+	resp, _ = noFollow.Get(f.approve(t, u, nil))
+	resp.Body.Close()
+	next = resp.Header.Get("Location")
+	code, body := f.browse(t, next, func(cb url.Values) { cb.Del("client_id") })
+	if code != 200 || !strings.Contains(body, "Continue with ChatGPT once more") || !strings.Contains(body, "invalid_grant") {
+		t.Fatalf("second failure page: %d %s", code, body)
+	}
+	if s := waitFlow(t, m, "failed"); s.Linked {
+		t.Fatalf("%+v", s)
+	}
+	u, _ = m.Begin(ctx, BeginOptions{})
+	if pu, _ := url.Parse(u); pu.Query().Get("client_id") != "oaiapp_test123" || pu.Query().Get("agent_name_hint") != "" {
+		t.Errorf("next sign-in registers again: %v", pu.Query())
+	}
+	f.browse(t, u, func(cb url.Values) { cb.Del("client_id") })
+	if s := waitFlow(t, m, "done"); !s.Linked {
+		t.Fatalf("final: %+v", s)
 	}
 }

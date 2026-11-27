@@ -443,6 +443,12 @@ ChatGPT" plan-usage flow for open-source, locally hosted apps
   restart. If the browser cannot reach the callback ("This site can't be
   reached"), the operator pastes the address into the card and
   `POST /api/ai/chatgpt/complete` finishes the same validated flow.
+* A new registration's issued client ID is saved (`pending_client_id`)
+  before the code is exchanged. If OpenAI answers `invalid_grant`, the
+  callback redirects the browser once to a fresh authorization with that
+  client (as OpenAI documents); a second failure shows OpenAI's message and
+  the next sign-in reuses the issued client instead of registering again.
+  Token-endpoint error bodies are logged (they carry no credentials).
 * `AccessToken` refreshes two minutes before expiry, serialized because the
   refresh token rotates. Unusable refresh tokens (`invalid_grant`,
   `refresh_token_reused`, …) clear the tokens and ask for a new sign-in;
