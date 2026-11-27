@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { navigate, useApp, useFetch } from "../lib/state";
 import { Icon } from "../components/Icon";
 import { KV, Notice, Panel, SkeletonRows } from "../components/UI";
+import { PacketLayer } from "../components/PacketLayer";
 
 type TNode = { id: string; kind: string; label: string; sub?: string; status: string; server_id?: string; group?: string; meta?: Record<string, any> };
 type TEdge = { from: string; to: string; kind: string; label?: string };
@@ -90,9 +91,10 @@ export function Topology() {
             <div className="label">Legend</div>
             {Object.entries(STATUS_COLOR).map(([k, c]) => <div key={k} className="row" style={{ fontSize: 12 }}><span style={{ width: 10, height: 10, borderRadius: 5, border: `2px solid ${c}` }} />{k}</div>)}
             <div className="sep" />
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="6"><line x1="0" y1="3" x2="40" y2="3" stroke="var(--accent)" strokeDasharray="4 4" /></svg> authenticated agent link</div>
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="6"><line x1="0" y1="3" x2="40" y2="3" stroke="var(--line-3)" /></svg> hosts / runs</div>
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="6"><line x1="0" y1="3" x2="40" y2="3" stroke="var(--c2)" strokeDasharray="2 3" /></svg> shared Docker network</div>
+            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><defs><linearGradient id="lg1" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="40" y2="0"><stop offset="0" stopColor="#3b4cff" /><stop offset="1" stopColor="#9d6bff" /></linearGradient></defs><line x1="0" y1="4" x2="40" y2="4" stroke="url(#lg1)" strokeWidth="0.8" /><circle cx="30" cy="4" r="1.6" fill="#e0dcff" /></svg> link with live data packets</div>
+            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke="#8b5cf6" strokeOpacity="0.6" strokeDasharray="2 3" /></svg> shared Docker network</div>
+            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke="var(--crit)" strokeDasharray="3 4" /></svg> link to an offline node (no traffic)</div>
+            <div className="faint" style={{ fontSize: 11.5 }}>Packets show the flow on each link: telemetry from agents to the core, commands back, and service traffic between components. They end in a small burst where they arrive. The animation shows the direction of flow, not a traffic measurement.</div>
             <Notice>Topology is generated from what the agents discovered: listening processes, systemd failures, containers and their networks. Select a node for details.</Notice>
           </div>
         )}
@@ -130,6 +132,8 @@ function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1000, h: 700 });
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const sim = useRef(new Map<string, Sim>());
   const [, tick] = useState(0);
   const drag = useRef<{ id?: string; sx: number; sy: number; vx: number; vy: number; moved: boolean } | null>(null);
@@ -271,11 +275,16 @@ function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]
   const ns = [...sim.current.values()];
   return (
     <div ref={wrap} style={{ position: "absolute", inset: 0, cursor: drag.current && !drag.current.id ? "grabbing" : "grab" }} onWheel={onWheel} onPointerDown={(e) => onDown(e)} onPointerMove={onMove} onPointerUp={onUp}>
-      <svg width="100%" height="100%" style={{ display: "block" }}>
+      <PacketLayer nodes={sim} edges={edges} view={viewRef} radius={(k) => KIND_META[k]?.r ?? 14} />
+      <svg width="100%" height="100%" style={{ display: "block", position: "relative" }}>
         <defs>
+          <radialGradient id="halo">
+            <stop offset="0%" stopColor="#7c4dff" stopOpacity="0.32" />
+            <stop offset="55%" stopColor="#4f46e5" stopOpacity="0.10" />
+            <stop offset="100%" stopColor="#3b4cff" stopOpacity="0" />
+          </radialGradient>
           <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
-        <style>{`.flow{animation:flow 1.2s linear infinite}@keyframes flow{to{stroke-dashoffset:-16}}`}</style>
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           {edges.map((e, i) => {
             const s = sim.current.get(e.from), t = sim.current.get(e.to);
@@ -284,8 +293,8 @@ function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]
             const off = t.status === "offline";
             return (
               <g key={i}>
-                <line x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke={off ? "var(--crit)" : agentLink ? "var(--accent)" : e.kind === "network" ? "var(--c2)" : "var(--line-3)"} strokeOpacity={agentLink ? 0.7 : 0.55} strokeWidth={agentLink ? 1.4 : 1} strokeDasharray={agentLink ? "4 4" : e.kind === "network" ? "2 3" : undefined} className={agentLink && !off ? "flow" : undefined} />
-                {e.label && (agentLink || view.k > 1.4) && <text x={(s.x + t.x) / 2} y={(s.y + t.y) / 2 - 4} textAnchor="middle" fill="var(--text-4)" style={{ font: "9.5px var(--font-mono)" }}>{e.label}</text>}
+                {(off || e.kind === "network") && <line x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke={off ? "var(--crit)" : "#8b5cf6"} strokeOpacity={off ? 0.5 : 0.35} strokeWidth={0.6} strokeDasharray={off ? "3 4" : "2 3"} vectorEffect="non-scaling-stroke" />}
+                {e.label && view.k > (agentLink ? 1.3 : 2) && <text x={(s.x + t.x) / 2} y={(s.y + t.y) / 2 - 4} textAnchor="middle" fill="var(--text-4)" style={{ font: "9.5px var(--font-mono)" }}>{e.label}</text>}
               </g>
             );
           })}
@@ -297,6 +306,7 @@ function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]
             return (
               <g key={n.id} transform={`translate(${n.x},${n.y})`} style={{ cursor: "pointer", opacity: dim ? 0.2 : 1, transition: "opacity 200ms" }} onPointerDown={(e) => onDown(e, n.id)}>
                 {(n.status === "critical" || n.status === "offline") && <circle r={km.r + 6} fill="none" stroke={col} strokeOpacity={0.35} filter="url(#glow)"><animate attributeName="r" values={`${km.r + 3};${km.r + 9};${km.r + 3}`} dur="2s" repeatCount="indefinite" /></circle>}
+                {n.status !== "offline" && <circle r={km.r * 2.1} fill="url(#halo)" style={{ pointerEvents: "none" }} />}
                 <circle r={km.r} fill="var(--surface)" stroke={isSel ? "var(--accent)" : col} strokeWidth={isSel ? 2.5 : 1.8} />
                 <foreignObject x={-9} y={-9} width={18} height={18} style={{ pointerEvents: "none", color: "var(--text-2)" }}>
                   <Icon name={km.icon} size={18} stroke={1.5} />
