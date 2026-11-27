@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { navigate, useApp, useFetch } from "../lib/state";
 import { Icon } from "../components/Icon";
 import { KV, Notice, Panel, SkeletonRows } from "../components/UI";
-import { PacketLayer } from "../components/PacketLayer";
+import { FLOW_THEMES, PacketLayer, type FlowTheme } from "../components/PacketLayer";
+import { DEVICE_CSS, Device, DeviceDefs, LED_COLOR, deviceOf } from "../components/Devices";
 
 type TNode = { id: string; kind: string; label: string; sub?: string; status: string; server_id?: string; group?: string; meta?: Record<string, any> };
 type TEdge = { from: string; to: string; kind: string; label?: string };
@@ -19,6 +20,18 @@ const KIND_META: Record<string, { icon: string; tier: number; r: number; label: 
   database: { icon: "database", tier: 3, r: 16, label: "Databases" },
   container: { icon: "layers", tier: 4, r: 13, label: "Containers" },
 };
+
+// Spacing radius for the layout, from the device size.
+for (const k of Object.keys(KIND_META)) { const d = deviceOf(k); KIND_META[k].r = Math.round(Math.max(d.w, d.h) / 2); }
+
+const THEME_KEY = "nexus.topology.theme";
+function loadTheme(): FlowTheme {
+  try {
+    const t = localStorage.getItem(THEME_KEY) as FlowTheme | null;
+    if (t && FLOW_THEMES.some((x) => x.id === t)) return t;
+  } catch { /* storage unavailable */ }
+  return "plasma";
+}
 
 const STATUS_COLOR: Record<string, string> = { ok: "var(--ok)", warning: "var(--warn)", critical: "var(--crit)", offline: "var(--crit)", unknown: "var(--idle)" };
 const POS_KEY = "nexus.topology.pins";
@@ -46,6 +59,9 @@ export function Topology() {
   const [serverFilter, setServerFilter] = useState("");
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<TNode | null>(null);
+  const [theme, setThemeState] = useState<FlowTheme>(loadTheme);
+  const setTheme = (t: FlowTheme) => { setThemeState(t); try { localStorage.setItem(THEME_KEY, t); } catch { /* ignore */ } };
+  const themeInfo = FLOW_THEMES.find((t) => t.id === theme)!;
 
   const { nodes, edges } = useMemo(() => {
     const ns = (topo.data?.nodes ?? []).filter((n) => !hidden.has(n.kind) && (!serverFilter || !n.server_id || n.server_id === serverFilter));
@@ -80,21 +96,29 @@ export function Topology() {
             ))}
           </div>
           <span className="spacer" />
+          <label className="row" style={{ gap: 6, fontSize: 12 }} title={themeInfo.desc}>
+            <span className="faint">Animation</span>
+            <select className="select" style={{ background: "var(--surface)" }} value={theme} onChange={(e) => setTheme(e.target.value as FlowTheme)}>
+              {FLOW_THEMES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+          </label>
           <button className="btn sm" style={{ background: "var(--surface)" }} onClick={() => { savePins({}); topo.reload(); setSel(null); window.dispatchEvent(new Event("nexus-topology-reset")); }}>Reset layout</button>
         </div>
-        {!topo.data ? <div style={{ padding: 80 }}><SkeletonRows /></div> : <Graph nodes={nodes} edges={edges} highlight={q} selected={sel?.id} onSelect={setSel} />}
+        {!topo.data ? <div style={{ padding: 80 }}><SkeletonRows /></div> : <Graph nodes={nodes} edges={edges} highlight={q} selected={sel?.id} onSelect={setSel} theme={theme} />}
         <div className="faint" style={{ position: "absolute", bottom: 12, left: 14, fontSize: 11 }}>Scroll to zoom · drag background to pan · drag nodes to rearrange (positions are remembered) · {topo.data?.note}</div>
       </div>
       <aside style={{ borderLeft: "1px solid var(--line)", background: "var(--chrome)", overflow: "auto", padding: 16 }}>
         {sel ? <NodeDetail n={sel} /> : (
           <div className="col" style={{ gap: 12 }}>
             <div className="label">Legend</div>
-            {Object.entries(STATUS_COLOR).map(([k, c]) => <div key={k} className="row" style={{ fontSize: 12 }}><span style={{ width: 10, height: 10, borderRadius: 5, border: `2px solid ${c}` }} />{k}</div>)}
+            {Object.entries(LED_COLOR).map(([k, c]) => <div key={k} className="row" style={{ fontSize: 12 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: c, boxShadow: k === "offline" ? "none" : `0 0 6px ${c}` }} />{k} <span className="faint">(power light)</span></div>)}
+            <div className="row" style={{ fontSize: 12 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: themeInfo.act, boxShadow: `0 0 6px ${themeInfo.act}` }} />activity lights</div>
             <div className="sep" />
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><defs><linearGradient id="lg1" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="40" y2="0"><stop offset="0" stopColor="#3b4cff" /><stop offset="1" stopColor="#9d6bff" /></linearGradient></defs><line x1="0" y1="4" x2="40" y2="4" stroke="url(#lg1)" strokeWidth="0.8" /><circle cx="30" cy="4" r="1.6" fill="#e0dcff" /></svg> link with live data packets</div>
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke="#8b5cf6" strokeOpacity="0.6" strokeDasharray="2 3" /></svg> shared Docker network</div>
-            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke="var(--crit)" strokeDasharray="3 4" /></svg> link to an offline node (no traffic)</div>
-            <div className="faint" style={{ fontSize: 11.5 }}>Packets show the flow on each link: telemetry from agents to the core, commands back, and service traffic between components. They end in a small burst where they arrive. The animation shows the direction of flow, not a traffic measurement.</div>
+            <div className="label">Animation: {themeInfo.label}</div>
+            <div className="dim" style={{ fontSize: 12 }}>{themeInfo.desc}</div>
+            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke={themeInfo.act} strokeOpacity="0.6" strokeDasharray="2 3" /></svg> shared Docker network</div>
+            <div className="row" style={{ fontSize: 12 }}><svg width="40" height="8"><line x1="0" y1="4" x2="40" y2="4" stroke="var(--crit)" strokeDasharray="3 4" /></svg> link to an offline device (no traffic)</div>
+            <div className="faint" style={{ fontSize: 11.5 }}>Traffic runs from agents to the core (telemetry), back (commands), and from servers to their services and containers. The animation shows direction, not a traffic measurement.</div>
             <Notice>Topology is generated from what the agents discovered: listening processes, systemd failures, containers and their networks. Select a node for details.</Notice>
           </div>
         )}
@@ -128,7 +152,7 @@ function NodeDetail({ n }: { n: TNode }) {
   );
 }
 
-function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]; edges: TEdge[]; highlight: string; selected?: string; onSelect: (n: TNode | null) => void }) {
+function Graph({ nodes, edges, highlight, selected, onSelect, theme }: { nodes: TNode[]; edges: TEdge[]; highlight: string; selected?: string; onSelect: (n: TNode | null) => void; theme: FlowTheme }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1000, h: 700 });
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
@@ -275,44 +299,32 @@ function Graph({ nodes, edges, highlight, selected, onSelect }: { nodes: TNode[]
   const ns = [...sim.current.values()];
   return (
     <div ref={wrap} style={{ position: "absolute", inset: 0, cursor: drag.current && !drag.current.id ? "grabbing" : "grab" }} onWheel={onWheel} onPointerDown={(e) => onDown(e)} onPointerMove={onMove} onPointerUp={onUp}>
-      <PacketLayer nodes={sim} edges={edges} view={viewRef} radius={(k) => KIND_META[k]?.r ?? 14} />
-      <svg width="100%" height="100%" style={{ display: "block", position: "relative" }}>
+      <PacketLayer nodes={sim} edges={edges} view={viewRef} theme={theme} extent={(k) => { const d = deviceOf(k); return [d.w / 2, d.h / 2]; }} />
+      <svg width="100%" height="100%" style={{ display: "block", position: "relative", ["--act" as any]: FLOW_THEMES.find((t) => t.id === theme)!.act }}>
         <defs>
-          <radialGradient id="halo">
-            <stop offset="0%" stopColor="#7c4dff" stopOpacity="0.32" />
-            <stop offset="55%" stopColor="#4f46e5" stopOpacity="0.10" />
-            <stop offset="100%" stopColor="#3b4cff" stopOpacity="0" />
-          </radialGradient>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <DeviceDefs />
         </defs>
+        <style>{DEVICE_CSS}</style>
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           {edges.map((e, i) => {
             const s = sim.current.get(e.from), t = sim.current.get(e.to);
             if (!s || !t) return null;
             const agentLink = e.kind === "agent" || e.kind === "control";
-            const off = t.status === "offline";
             return (
               <g key={i}>
-                {(off || e.kind === "network") && <line x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke={off ? "var(--crit)" : "#8b5cf6"} strokeOpacity={off ? 0.5 : 0.35} strokeWidth={0.6} strokeDasharray={off ? "3 4" : "2 3"} vectorEffect="non-scaling-stroke" />}
-                {e.label && view.k > (agentLink ? 1.3 : 2) && <text x={(s.x + t.x) / 2} y={(s.y + t.y) / 2 - 4} textAnchor="middle" fill="var(--text-4)" style={{ font: "9.5px var(--font-mono)" }}>{e.label}</text>}
+                {e.label && view.k > (agentLink ? 1.9 : 2.3) && <text x={(s.x + t.x) / 2} y={(s.y + t.y) / 2 - 4} textAnchor="middle" fill="var(--text-4)" style={{ font: "9.5px var(--font-mono)" }}>{e.label}</text>}
               </g>
             );
           })}
           {ns.map((n) => {
-            const km = KIND_META[n.kind] ?? KIND_META.container;
+            const dh = deviceOf(n.kind).h / 2;
             const dim = hl && !(`${n.label} ${n.sub ?? ""}`.toLowerCase().includes(hl));
-            const col = STATUS_COLOR[n.status] ?? "var(--idle)";
             const isSel = selected === n.id;
             return (
               <g key={n.id} transform={`translate(${n.x},${n.y})`} style={{ cursor: "pointer", opacity: dim ? 0.2 : 1, transition: "opacity 200ms" }} onPointerDown={(e) => onDown(e, n.id)}>
-                {(n.status === "critical" || n.status === "offline") && <circle r={km.r + 6} fill="none" stroke={col} strokeOpacity={0.35} filter="url(#glow)"><animate attributeName="r" values={`${km.r + 3};${km.r + 9};${km.r + 3}`} dur="2s" repeatCount="indefinite" /></circle>}
-                {n.status !== "offline" && <circle r={km.r * 2.1} fill="url(#halo)" style={{ pointerEvents: "none" }} />}
-                <circle r={km.r} fill="var(--surface)" stroke={isSel ? "var(--accent)" : col} strokeWidth={isSel ? 2.5 : 1.8} />
-                <foreignObject x={-9} y={-9} width={18} height={18} style={{ pointerEvents: "none", color: "var(--text-2)" }}>
-                  <Icon name={km.icon} size={18} stroke={1.5} />
-                </foreignObject>
-                <text y={km.r + 14} textAnchor="middle" fill="var(--text)" style={{ font: `${n.kind === "server" || n.kind === "core" ? 600 : 500} 11.5px var(--font-ui)`, pointerEvents: "none" }}>{n.label.length > 24 ? n.label.slice(0, 23) + "…" : n.label}</text>
-                {n.sub && view.k > 0.7 && <text y={km.r + 27} textAnchor="middle" fill="var(--text-3)" style={{ font: "10px var(--font-mono)", pointerEvents: "none" }}>{n.sub.length > 34 ? n.sub.slice(0, 33) + "…" : n.sub}</text>}
+                <Device id={n.id} kind={n.kind} status={n.status} selected={isSel} />
+                <text y={dh + 15} textAnchor="middle" fill="var(--text)" style={{ font: `${n.kind === "server" || n.kind === "core" ? 600 : 500} 11.5px var(--font-ui)`, pointerEvents: "none" }}>{n.label.length > 24 ? n.label.slice(0, 23) + "…" : n.label}</text>
+                {n.sub && view.k > 0.7 && <text y={dh + 28} textAnchor="middle" fill="var(--text-3)" style={{ font: "10px var(--font-mono)", pointerEvents: "none" }}>{n.sub.length > 34 ? n.sub.slice(0, 33) + "…" : n.sub}</text>}
               </g>
             );
           })}
