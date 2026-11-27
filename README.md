@@ -26,7 +26,7 @@ maintenance.
 | **Server operations** | Processes (live CPU%, details, sockets); systemd services (state, health assessment, dependencies, logs, start/stop/restart/reload with verification); logs (journald or allowlisted `/var/log` files); Docker (containers, health, stats, logs, actions, images, volumes, networks, Compose projects); storage (filesystems, block devices, directory analysis, large-file report); network (interfaces, routes, DNS, sockets with bind scope, ufw/nftables/iptables listing); APT (installed, simulated updates with security classification, refresh, upgrade, history). |
 | **Security center** | Effective `sshd -T` configuration with findings, SSH/sudo authentication activity, local accounts, sensitive-file permissions, UID 0 accounts, firewall state, pending security updates and reboot-required status. |
 | **Monitoring** | Deterministic rules with sustain windows for CPU, memory, swap, load, disk, inodes and temperature; rules for failed units, unhealthy, exited and restarting containers, security updates, reboot-required, security findings, unexpected reboots and offline agents. De-duplication, cooldowns, storm suppression, and incidents that group related alerts. **Website checks** run from your PC (status, expected text, response time, uptime, TLS certificate expiry) and alert on the hosting server after consecutive failures. **Disk-full forecasts** fit 14 days of hourly per-filesystem history and warn 14 and 3 days ahead when the trend is reliable. |
-| **AI core** | Runs on **Ollama** or **Colibri** (choose in Settings → AI engine; Colibri is used through its OpenAI-compatible API with tool calling, optional API key stored encrypted). Ollama detection, model discovery, capability detection (`/api/show`), tool calling with streaming, a JSON-schema fallback for models without tools, model roles with automatic selection, hardware-aware recommendations, explicit model downloads, 46 typed tools, a catalog of 111 administration commands it can run with sudo (apt install/remove, systemctl enable/disable, journal clean-up, ufw rules, certbot, Docker clean-up and more; arguments validated, no shell), shell commands as root that you approve one by one (signed by NEXUS and verified on the server), a built-in library of 24 Linux runbooks it searches before acting, four operational modes, a per-server policy engine, approvals with impact previews, verification after every change, persistent operational memory, and rate-limited automatic incident investigations. |
+| **AI core** | Runs on **Ollama** or **Colibri** locally, or on your **ChatGPT plan** (choose in Settings → AI engine; Colibri is used through its OpenAI-compatible API with tool calling, optional API key stored encrypted; ChatGPT through "Sign in with ChatGPT" and the Responses API, tokens stored encrypted). Ollama detection, model discovery, capability detection (`/api/show`), tool calling with streaming, a JSON-schema fallback for models without tools, model roles with automatic selection, hardware-aware recommendations, explicit model downloads, 46 typed tools, a catalog of 111 administration commands it can run with sudo (apt install/remove, systemctl enable/disable, journal clean-up, ufw rules, certbot, Docker clean-up and more; arguments validated, no shell), shell commands as root that you approve one by one (signed by NEXUS and verified on the server), a built-in library of 24 Linux runbooks it searches before acting, four operational modes, a per-server policy engine, approvals with impact previews, verification after every change, persistent operational memory, and rate-limited automatic incident investigations. |
 | **Desktop UI** | Command Center (customisable layout), Fleet, server workspace (overview with historical charts and nine operational tabs), AI Command Center, Incidents and Alerts, Approvals, interactive Topology, Policies editor, Memory, Activity and hash-chained Audit, and Settings. Four themes (Graphite, Midnight, Tactical, Light) plus custom accent and density. |
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
@@ -115,6 +115,26 @@ NEXUS's AI runs on your own machine, with either engine (Settings → AI engine)
   you set `COLI_API_KEY`. Colibri manages its own models. NEXUS uses those
   with tool calling (GLM, Qwen, DeepSeek, Kimi, MiMo), and Colibri answers one
   request at a time, so large models on modest hardware are slow.
+
+#### Optional: your ChatGPT plan
+
+Instead of a local engine you can link your ChatGPT subscription: Settings →
+AI engine → **ChatGPT** → **Continue with ChatGPT**. Your browser opens
+OpenAI's sign-in page; approve NEXUS and return. NEXUS then lists the ChatGPT
+models your plan offers and uses them for the AI, counted against your plan's
+usage (review or limit it with **Manage usage**, which opens
+[ChatGPT usage settings](https://chatgpt.com/settings/usage)).
+
+* Prompts and everything the AI's tools return (server names, logs, command
+  output, telemetry) go to OpenAI. Automatic incident investigations use your
+  plan too. Approvals and command policies are unchanged.
+* The sign-in tokens are stored encrypted with your Windows account, refreshed
+  automatically and revoked when you sign out. They are never shown to the
+  model or returned by the API.
+* It is optional: Ollama and Colibri keep working without it, and you can
+  switch back at any time.
+* OpenAI documents plan usage for open-source and locally hosted apps. Plus
+  plans share a 5-hour usage limit across every app that uses the plan.
 
 ## Releases and updates
 

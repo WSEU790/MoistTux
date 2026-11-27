@@ -18,6 +18,7 @@ import { Policies } from "./pages/Policies";
 import { Knowledge } from "./pages/Knowledge";
 import { Websites } from "./pages/Websites";
 import { Settings, restartToUpdate, useUpdateStatus } from "./pages/Settings";
+import { ChatGPTWelcome } from "./pages/ChatGPT";
 
 type NavItem = { id: string; label: string; icon: string; badge?: () => { n: number; cls?: string } | null };
 
@@ -192,6 +193,7 @@ export function App() {
       </main>
       {palette && <Palette onClose={() => setPalette(false)} />}
       <Toasts />
+      <ChatGPTWelcome />
       {!app.connected && app.serversLoaded && (
         <div style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", zIndex: 60 }} className="chip warn">
           <Icon name="refresh" size={12} className="spin" /> Reconnecting to the NEXUS core…

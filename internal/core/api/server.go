@@ -24,6 +24,7 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/agentclient"
 	"github.com/WSEU790/MoistTux/internal/core/ai"
+	"github.com/WSEU790/MoistTux/internal/core/chatgpt"
 	"github.com/WSEU790/MoistTux/internal/core/deploy"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
@@ -37,6 +38,7 @@ import (
 type Server struct {
 	Knowledge   *knowledge.Library
 	Agents      *agentupdate.Manager
+	ChatGPT     *chatgpt.Manager
 	Sites       *sitecheck.Runner
 	Forecast    *forecast.Engine
 	Store       *store.Store

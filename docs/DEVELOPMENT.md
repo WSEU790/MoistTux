@@ -401,7 +401,7 @@ updates with `events`. Use the components in `components/UI.tsx` and the CSS
 variables in `styles/` so all four themes keep working. Run
 `npm --prefix web run typecheck`.
 
-### AI engines (Ollama and Colibri)
+### AI engines (Ollama, Colibri and ChatGPT)
 
 `internal/core/ollama` is the inference client. `Client.kind` is `ollama`
 (the Ollama REST API) or `openai` (OpenAI-compatible, used for Colibri,
@@ -417,6 +417,46 @@ Settings `provider`, `colibri_url` and a write-only `colibri_api_key` (sealed
 with DPAPI as `colibri_key_sealed`, never returned; "-" clears it) choose the
 engine. `openai_test.go` covers streaming tool calls, non-streamed replies,
 authentication, history conversion and error mapping.
+
+**ChatGPT plan** (`provider` `chatgpt`) follows OpenAI's "Sign in with
+ChatGPT" plan-usage flow for open-source, locally hosted apps
+(developers.openai.com/siwc/token-sharing-open-source):
+
+* `internal/core/chatgpt` owns the sign-in. `Begin` persists a
+  `urn:uuid:` host ID (`ext_agent_host_id`), opens a one-shot loopback
+  listener on `http://127.0.0.1:1455/auth/callback` (any free port if 1455 is
+  taken), and opens `auth.openai.com/api/accounts/authorize` in the system
+  browser (`Manager.OpenBrowser`, set by the Windows app) with PKCE S256,
+  `state`, `nonce` and `scope` `openid profile email offline_access
+  resource.invoke chatgpt.tokens.use.direct`. The first sign-in uses
+  `client_id=dynamic_agent_client` and `agent_name_hint=NEXUS`; the callback's
+  issued `oaiapp_…` client ID is saved and reused (with `id_token_hint` and
+  `login_hint`) afterwards.
+* The callback checks `state`, exchanges the code, verifies the ID token
+  (RS256/ES256 against the JWKS, issuer, audience = client ID, expiry, nonce)
+  and requires `chatgpt.tokens.use.direct` before inference. Tokens are sealed
+  with the protector in setting `ai.chatgpt`.
+* `AccessToken` refreshes two minutes before expiry, serialized because the
+  refresh token rotates. Unusable refresh tokens (`invalid_grant`,
+  `refresh_token_reused`, …) clear the tokens and ask for a new sign-in;
+  network errors keep them. `SignOut` revokes at the discovery document's
+  `revocation_endpoint` and keeps the client and host IDs.
+* `ollama/responses.go` (`Client.kind` `responses`) calls
+  `POST /v1/responses` with `store:false`, `stream:true`, the full history as
+  `input`, system messages as `instructions`, tools in a `nexus` namespace,
+  and no temperature/top_p/max tokens. Calls come from
+  `response.output_item.done`; success needs `response.completed`. History
+  gets synthetic `call_id`s, and the `namespace` field is echoed once the
+  model's calls carry it. Plan errors map to messages
+  (`subscription_sharing_usage_limit_exceeded` pauses requests until the
+  operator chooses Resume).
+* API: `GET /api/ai/chatgpt`, `POST /api/ai/chatgpt/{signin,cancel,signout,
+  welcome-seen,resume,open-usage}`; event `ai.chatgpt`. UI:
+  `web/src/pages/ChatGPT.tsx`.
+* Tests: `chatgpt_test.go` (fake auth server: PKCE, rotation, revocation,
+  declined consent, nonce, missing plan scope, disconnects),
+  `responses_test.go`, and `internal/integration/chatgpt_test.go` (sign-in
+  through the API, then a conversation that runs a real tool).
 
 ### Website checks and disk forecasts
 

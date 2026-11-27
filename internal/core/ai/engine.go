@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WSEU790/MoistTux/internal/core/chatgpt"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
 	"github.com/WSEU790/MoistTux/internal/core/forecast"
@@ -37,6 +38,8 @@ type Deps struct {
 	Forecast *forecast.Engine
 	// Protector seals secrets such as an AI engine API key.
 	Protector secrets.Protector
+	// ChatGPT is the operator's ChatGPT sign-in (provider "chatgpt").
+	ChatGPT *chatgpt.Manager
 }
 
 // ResolveServer accepts an ID, a display name or a hostname.
@@ -64,8 +67,9 @@ func (d *Deps) ResolveServer(ctx context.Context, ref string) (*store.Server, er
 
 // Settings are persisted under "ai.settings".
 type Settings struct {
-	// Provider is the inference engine: "ollama" (default) or "colibri"
-	// (an OpenAI-compatible local engine, see internal/core/ollama/openai.go).
+	// Provider is the inference engine: "ollama" (default), "colibri" (an
+	// OpenAI-compatible local engine, see internal/core/ollama/openai.go) or
+	// "chatgpt" (the operator's ChatGPT plan, see internal/core/chatgpt).
 	Provider   string `json:"provider"`
 	ColibriURL string `json:"colibri_url"`
 	// ColibriKey is write-only: a new API key from the operator ("-" clears
@@ -92,9 +96,9 @@ func (s *Settings) Validate() error {
 	switch s.Provider {
 	case "":
 		s.Provider = "ollama"
-	case "ollama", "colibri":
+	case "ollama", "colibri", "chatgpt":
 	default:
-		return fmt.Errorf("AI engine must be ollama or colibri")
+		return fmt.Errorf("AI engine must be ollama, colibri or chatgpt")
 	}
 	if s.ColibriURL == "" {
 		s.ColibriURL = ollama.DefaultColibriURL
@@ -165,7 +169,14 @@ func NewEngine(deps *Deps) *Engine {
 func (e *Engine) apply(s Settings) {
 	var c *ollama.Client
 	var err error
-	if s.Provider == "colibri" {
+	switch s.Provider {
+	case "chatgpt":
+		if m := e.deps.ChatGPT; m != nil {
+			c, err = ollama.NewResponses(m.APIBase(), m.AccessToken, m.NoteUsageLimit)
+		} else {
+			err = fmt.Errorf("ChatGPT sign-in is not available")
+		}
+	case "colibri":
 		key := ""
 		if s.ColibriKeySealed != "" && e.deps.Protector != nil {
 			if b, uerr := secrets.Open(e.deps.Protector, s.ColibriKeySealed); uerr == nil {
@@ -173,7 +184,7 @@ func (e *Engine) apply(s Settings) {
 			}
 		}
 		c, err = ollama.NewOpenAI(s.ColibriURL, key, "Colibri")
-	} else {
+	default:
 		c, err = ollama.New(s.OllamaURL)
 	}
 	if err != nil {
@@ -233,8 +244,8 @@ func (e *Engine) UpdateSettings(ctx context.Context, s Settings, by string) erro
 // ---------------------------------------------------------------- status & models
 
 type Status struct {
-	Engine    string           `json:"engine"`   // display name: Ollama, Colibri
-	Provider  string           `json:"provider"` // ollama | colibri
+	Engine    string           `json:"engine"`   // display name: Ollama, Colibri, ChatGPT
+	Provider  string           `json:"provider"` // ollama | colibri | chatgpt
 	Reachable bool             `json:"reachable"`
 	URL       string           `json:"url"`
 	Local     bool             `json:"local"`

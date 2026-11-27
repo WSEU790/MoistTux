@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { Bar, Empty, ErrorNote, KV, Notice, Panel, Seg, SkeletonRows, Switch } from "../components/UI";
 import { bytes, duration, time } from "../lib/format";
 import type { ModelInfo } from "../lib/types";
+import { ChatGPTCard, type ChatGPTStatus } from "./ChatGPT";
 
 const SECTIONS = [
   { id: "appearance", label: "Appearance", icon: "sun" },
@@ -108,6 +109,12 @@ function AIModels() {
   useEffect(() => { if (settings.data) { setUrl(settings.data.ollama_url); setCUrl(settings.data.colibri_url || "http://127.0.0.1:8000"); } }, [settings.data]);
   const provider: string = settings.data?.provider || "ollama";
   const colibri = provider === "colibri";
+  const chatgpt = provider === "chatgpt";
+  const cg = useFetch<ChatGPTStatus>("/api/ai/chatgpt", []);
+  const [view, setView] = useState<string>("");
+  useEffect(() => { if (settings.data) setView(settings.data.provider || "ollama"); }, [settings.data?.provider]);
+  const chatgptView = (view || provider) === "chatgpt";
+  const preview = chatgptView && !chatgpt; // looking at ChatGPT before it is the engine
   useEffect(
     () =>
       on((e) => {
@@ -142,10 +149,18 @@ function AIModels() {
       <Panel title="AI engine" actions={ai && <span className={"chip " + (ai.reachable ? "ok" : "crit")}>{ai.reachable ? `${ai.engine} connected${ai.version && ai.version !== "ready" ? ` · v${ai.version}` : ""}` : `${ai?.engine ?? "engine"} not reachable`}</span>}>
         <ErrorNote error={err} />
         <div className="row" style={{ marginBottom: 12 }}>
-          <Seg options={[{ id: "ollama", label: "Ollama" }, { id: "colibri", label: "Colibri" }]} value={provider} onChange={async (v) => { if (v !== provider && (await saveSettings({ provider: v }))) toast({ title: `AI engine: ${v === "colibri" ? "Colibri" : "Ollama"}`, kind: "ok" }); }} />
-          <span className="faint" style={{ fontSize: 12 }}>{colibri ? "Colibri runs large open models (GLM, Qwen, DeepSeek) locally through an OpenAI-compatible API." : "Ollama runs and downloads models on this or another machine."}</span>
+          <Seg options={[{ id: "ollama", label: "Ollama" }, { id: "colibri", label: "Colibri" }, { id: "chatgpt", label: "ChatGPT" }]} value={view} onChange={async (v) => {
+            setView(v);
+            if (v === provider) return;
+            // ChatGPT becomes the engine only once an account is linked (the card switches it then).
+            if (v === "chatgpt" && !(cg.data?.linked && cg.data.plan_enabled)) return;
+            if (await saveSettings({ provider: v })) toast({ title: `AI engine: ${({ ollama: "Ollama", colibri: "Colibri", chatgpt: "ChatGPT" } as any)[v]}`, kind: "ok" });
+          }} />
+          <span className="faint" style={{ fontSize: 12 }}>{chatgptView ? "Uses your ChatGPT subscription through OpenAI; runs in the cloud, not on this PC." : colibri ? "Colibri runs large open models (GLM, Qwen, DeepSeek) locally through an OpenAI-compatible API." : "Ollama runs and downloads models on this or another machine."}</span>
         </div>
-        {!colibri ? (
+        {chatgptView ? (
+          <ChatGPTCard active={chatgpt} onActivate={async () => { const ok = await saveSettings({ provider: "chatgpt" }); if (ok) cg.reload(); return ok; }} />
+        ) : !colibri ? (
           <form className="row" onSubmit={async (e) => { e.preventDefault(); if (await saveSettings({ ollama_url: url })) toast({ title: "Ollama endpoint saved", kind: "ok" }); }}>
             <input className="input mono grow" value={url} onChange={(e) => setUrl(e.target.value)} />
             <button className="btn primary">Save & test</button>
@@ -163,18 +178,19 @@ function AIModels() {
           </form>
         )}
         <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
-          {ai?.reachable
+          {chatgptView ? null : ai?.reachable
             ? (ai.local ? "Inference runs on this machine; nothing leaves your network." : "This endpoint is not on this machine. Prompts (which can include logs and telemetry) are sent to it.")
             : colibri
               ? `NEXUS could not reach Colibri: ${ai?.error ?? "checking…"}. Start it on this PC (or another machine) with "coli serve --host 127.0.0.1 --port 8000", or check the address. The API key is stored encrypted with your Windows account.`
               : `NEXUS could not reach Ollama: ${ai?.error ?? "checking…"}. Install it from ollama.com and run "ollama serve".`}
         </div>
-        {colibri && <Notice icon="info">Colibri manages its own models: install them with <span className="mono">coli</span> on the machine that runs it. NEXUS lists them below and uses those that support tool calling (GLM, Qwen, DeepSeek, Kimi, MiMo). Large models can be slow on modest hardware, and Colibri answers one request at a time, so automatic investigations may queue.</Notice>}
+        {colibri && !chatgptView && <Notice icon="info">Colibri manages its own models: install them with <span className="mono">coli</span> on the machine that runs it. NEXUS lists them below and uses those that support tool calling (GLM, Qwen, DeepSeek, Kimi, MiMo). Large models can be slow on modest hardware, and Colibri answers one request at a time, so automatic investigations may queue.</Notice>}
         {ai?.running && ai.running.length > 0 && (
           <div className="row wrap" style={{ marginTop: 10, gap: 6 }}>{ai.running.map((r) => <span key={r.name} className="chip accent">{r.name} loaded · {bytes(r.size_vram)} in VRAM · ctx {r.context_length}</span>)}</div>
         )}
       </Panel>
 
+      {preview ? null : <>
       <Panel title="Model roles" actions={<span className="faint" style={{ fontSize: 12 }}>Unassigned roles are chosen automatically</span>}>
         {!roles.data || !settings.data ? <SkeletonRows n={4} /> : (
           <table className="t">
@@ -188,7 +204,7 @@ function AIModels() {
                     <td>
                       <select className="select" value={settings.data.roles?.[r.id] ?? ""} onChange={(e) => { const roles2 = { ...(settings.data.roles ?? {}) }; e.target.value ? (roles2[r.id] = e.target.value) : delete roles2[r.id]; saveSettings({ roles: roles2 }); }}>
                         <option value="">Automatic</option>
-                        {(models.data ?? []).filter((m) => !m.capabilities.embedding || m.capabilities.completion).map((m) => <option key={m.name} value={m.name}>{m.name}{m.capabilities.tools ? "" : " (no tools)"}</option>)}
+                        {(models.data ?? []).filter((m) => !m.capabilities.embedding || m.capabilities.completion).map((m) => <option key={m.name} value={m.name}>{m.display_name || m.name}{m.capabilities.tools ? "" : " (no tools)"}</option>)}
                       </select>
                     </td>
                     <td>{res ? <span className="mono" style={{ fontSize: 12 }}>{res.model}{res.automatic ? <span className="faint"> · auto</span> : ""}{!res.tools && <span className="warn-t"> · JSON protocol</span>}</span> : <span className="faint">{ai?.role_error ?? "—"}</span>}{res?.notice && <div className="warn-t" style={{ fontSize: 11 }}>{res.notice}</div>}</td>
@@ -200,15 +216,15 @@ function AIModels() {
         )}
       </Panel>
 
-      <Panel title={colibri ? "Models served by Colibri" : "Installed models"} bodyClass="flush">
+      <Panel title={chatgpt ? "ChatGPT models available to your plan" : colibri ? "Models served by Colibri" : "Installed models"} bodyClass="flush">
         <ErrorNote error={models.error} />
-        {!models.data && !models.error ? <SkeletonRows /> : models.data?.length === 0 ? <Empty icon="ai" title={colibri ? "Colibri reports no models" : "No models installed"}>{colibri ? "Install a model with coli on the machine that runs Colibri, then re-test." : "Download one of the recommendations below."}</Empty> : (
+        {!models.data && !models.error ? <SkeletonRows /> : models.data?.length === 0 ? <Empty icon="ai" title={chatgpt ? "ChatGPT lists no models for this account" : colibri ? "Colibri reports no models" : "No models installed"}>{chatgpt ? "Check the linked account's plan in ChatGPT, then re-test." : colibri ? "Install a model with coli on the machine that runs Colibri, then re-test." : "Download one of the recommendations below."}</Empty> : (
           <table className="t">
             <thead><tr><th>Model</th><th>Parameters</th><th>Quantization</th><th>Size</th><th>Capabilities</th><th>Context</th><th className="r" /></tr></thead>
             <tbody>
               {models.data?.map((m) => (
                 <tr key={m.name}>
-                  <td className="mono" style={{ fontWeight: 500 }}>{m.name}<div className="faint" style={{ fontSize: 11 }}>{m.details.family}{m.modified_at && !m.modified_at.startsWith("0001") ? ` · modified ${time(m.modified_at)}` : ""}</div></td>
+                  <td className="mono" style={{ fontWeight: 500 }}>{m.display_name ? <>{m.display_name} <span className="faint" style={{ fontWeight: 400 }}>{m.name}</span></> : m.name}<div className="faint" style={{ fontSize: 11 }}>{m.details.family}{m.modified_at && !m.modified_at.startsWith("0001") ? ` · modified ${time(m.modified_at)}` : ""}</div></td>
                   <td className="mono">{m.details.parameter_size}</td>
                   <td className="mono faint">{m.details.quantization_level}</td>
                   <td className="mono">{bytes(m.size)}{m.fits_memory === false && <div className="warn-t" style={{ fontSize: 11 }}>exceeds memory budget</div>}</td>
@@ -222,7 +238,7 @@ function AIModels() {
                     <div className="faint" style={{ fontSize: 10.5 }}>{m.capabilities.source}{m.capabilities_error ? ` · ${m.capabilities_error}` : ""}</div>
                   </td>
                   <td className="mono faint">{m.capabilities.context_length ? m.capabilities.context_length.toLocaleString() : "—"}</td>
-                  <td className="r">{!colibri && <button className="btn ghost sm" onClick={() => { if (confirm(`Delete ${m.name} from Ollama?`)) api.del(`/api/ai/models/${encodeURIComponent(m.name)}`).then(() => { models.reload(); reloadAI(); }).catch((e) => setErr(e.message)); }}><Icon name="trash" size={13} /></button>}</td>
+                  <td className="r">{!colibri && !chatgpt && <button className="btn ghost sm" onClick={() => { if (confirm(`Delete ${m.name} from Ollama?`)) api.del(`/api/ai/models/${encodeURIComponent(m.name)}`).then(() => { models.reload(); reloadAI(); }).catch((e) => setErr(e.message)); }}><Icon name="trash" size={13} /></button>}</td>
                 </tr>
               ))}
             </tbody>
@@ -230,7 +246,8 @@ function AIModels() {
         )}
       </Panel>
 
-      {!colibri && <Panel title="Hardware & recommendations">
+      </>}
+      {!colibri && !chatgpt && !preview && <Panel title="Hardware & recommendations">
         {!h ? <SkeletonRows /> : (
           <div className="col" style={{ gap: 14 }}>
             <div className="grid g3">

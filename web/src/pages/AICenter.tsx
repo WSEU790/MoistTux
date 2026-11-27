@@ -7,6 +7,7 @@ import { Markdown } from "../components/Markdown";
 import { ago, bytes, pct, time, until } from "../lib/format";
 import type { Approval, Conversation, Execution, Message, Mode } from "../lib/types";
 import { ExecDrawer } from "./ServerTabs";
+import { UsingPlan } from "./ChatGPT";
 
 export const MODES: { id: Mode; label: string; desc: string; color: string }[] = [
   { id: "assistant", label: "Assistant", desc: "Answers and explains. Read-only.", color: "var(--info)" },
@@ -59,7 +60,7 @@ export function AICenter({ convId }: { convId?: string }) {
         </div>
         <div style={{ padding: 12, borderTop: "1px solid var(--line)", fontSize: "var(--fs-xs)" }} className="faint">
           <span className={"dot " + (ai?.reachable ? "ok" : "crit")} style={{ marginRight: 6 }} />
-          {ai?.reachable ? `${ai.engine}${ai.version && ai.version !== "ready" ? " " + ai.version : ""} · ${ai.local ? "local" : "remote"} · private` : `${ai?.engine ?? "AI engine"} not reachable`}
+          {ai?.reachable ? `${ai.engine}${ai.version && ai.version !== "ready" ? " " + ai.version : ""} · ${ai.provider === "chatgpt" ? "your ChatGPT plan" : ai.local ? "local · private" : "remote"}` : `${ai?.engine ?? "AI engine"} not reachable`}
         </div>
       </aside>
       {convId ? <Thread key={convId} id={convId} onChanged={list.reload} /> : <Welcome onStart={create} />}
@@ -80,9 +81,9 @@ function Welcome({ onStart }: { onStart: (m?: Mode) => void }) {
         <div className="label accent-t">AI Command Center</div>
         <h1 style={{ fontFamily: "var(--font-display)", fontSize: 34, fontWeight: 600, margin: "8px 0 8px", letterSpacing: "-0.02em" }}>Talk to your infrastructure.</h1>
         <p className="dim" style={{ fontSize: 15, maxWidth: 640 }}>
-          NEXUS investigates with typed, audited tools before answering, separates facts from hypotheses, and routes every change through your execution policy. Inference runs locally in Ollama or Colibri.
+          NEXUS investigates with typed, audited tools before answering, separates facts from hypotheses, and routes every change through your execution policy. Inference runs locally in Ollama or Colibri, or on your ChatGPT plan if you link it.
         </p>
-        {ai && !ai.reachable && <div style={{ margin: "16px 0" }}><Notice kind="warn">{ai.engine} is not reachable at {ai.url}: {ai.error}. <a href="#/settings/ai">Configure the local AI</a>.</Notice></div>}
+        {ai && !ai.reachable && <div style={{ margin: "16px 0" }}><Notice kind="warn">{ai.engine} is not reachable at {ai.url}: {ai.error}. <a href="#/settings/ai">Configure the AI engine</a>.</Notice></div>}
         {ai?.reachable && ai.models === 0 && <div style={{ margin: "16px 0" }}><Notice kind="warn">{ai.engine} is running but has no models. <a href="#/settings/ai">Download a recommended model</a>.</Notice></div>}
         <div className="grid g2" style={{ marginTop: 24 }}>
           {MODES.map((m) => (
@@ -256,6 +257,7 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
               />
               <button className="btn primary icon" style={{ height: 40, width: 40 }} disabled={busy || !text.trim()} aria-label="Send"><Icon name="send" /></button>
             </form>
+            <UsingPlan />
           </div>
         </div>
       </section>

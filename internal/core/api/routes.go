@@ -65,6 +65,7 @@ func (s *Server) routes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/ai/hardware", s.hardware)
 	m.HandleFunc("GET /api/ai/tools", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.Registry.Info()) })
 	m.HandleFunc("GET /api/ai/roles", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, ai.Roles) })
+	s.chatgptRoutes(m)
 
 	m.HandleFunc("GET /api/conversations", s.listConversations)
 	m.HandleFunc("POST /api/conversations", s.createConversation)

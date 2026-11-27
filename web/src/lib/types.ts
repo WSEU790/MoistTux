@@ -306,6 +306,7 @@ export interface ToolInfo {
 
 export interface ModelInfo {
   name: string;
+  display_name?: string;
   model: string;
   modified_at: string;
   size: number;
@@ -325,8 +326,8 @@ export interface Resolution {
   tools: boolean;
 }
 export interface AIStatus {
-  engine: string; // Ollama | Colibri
-  provider: string; // ollama | colibri
+  engine: string; // Ollama | Colibri | ChatGPT
+  provider: string; // ollama | colibri | chatgpt
   reachable: boolean;
   url: string;
   local: boolean;

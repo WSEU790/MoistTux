@@ -62,6 +62,7 @@ func main() {
 	}
 	defer unlock()
 	defer a.Close()
+	a.ChatGPT.OpenBrowser = openBrowser // ChatGPT sign-in happens in the system browser
 
 	if !*headless {
 		w = webview2.NewWithOptions(webview2.WebViewOptions{

@@ -23,6 +23,7 @@ import (
 
 	"github.com/WSEU790/MoistTux/internal/core/ai"
 	"github.com/WSEU790/MoistTux/internal/core/api"
+	"github.com/WSEU790/MoistTux/internal/core/chatgpt"
 	"github.com/WSEU790/MoistTux/internal/core/deploy"
 	"github.com/WSEU790/MoistTux/internal/core/events"
 	"github.com/WSEU790/MoistTux/internal/core/fleet"
@@ -67,6 +68,7 @@ type App struct {
 	AI        *ai.Engine
 	Knowledge *knowledge.Library
 	Agents    *agentupdate.Manager
+	ChatGPT   *chatgpt.Manager
 	Sites     *sitecheck.Runner
 	Forecast  *forecast.Engine
 	API       *api.Server
@@ -171,7 +173,9 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, fmt.Errorf("knowledge library: %w", err)
 	}
 	a.Knowledge = lib
-	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol, Knowledge: lib, Protector: prot}
+	a.ChatGPT = chatgpt.New(st, prot, logger)
+	a.ChatGPT.OnChange = func() { a.Bus.Publish("ai.chatgpt", a.ChatGPT.Status()) }
+	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol, Knowledge: lib, Protector: prot, ChatGPT: a.ChatGPT}
 	a.AI = ai.NewEngine(deps)
 	a.Monitor.SetInvestigator(func(ctx context.Context, inc *store.Incident) {
 		p, _ := pol.Effective(ctx, inc.ServerID)
@@ -198,7 +202,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Token = hex.EncodeToString(tok)
-	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib, Agents: a.Agents, Sites: a.Sites, Forecast: a.Forecast,
+	a.API = &api.Server{Store: st, Bus: a.Bus, Fleet: a.Fleet, Monitor: a.Monitor, Notifier: a.Notifier, Deploy: a.Deploy, Update: a.Update, ApplyUpdate: a.ApplyUpdate, AI: a.AI, Registry: reg, Policies: pol, Knowledge: lib, Agents: a.Agents, ChatGPT: a.ChatGPT, Sites: a.Sites, Forecast: a.Forecast,
 		Identity: identFn, Log: logger, UI: webui.FS(), Token: a.Token, Version: Version, DataDir: opts.DataDir, Started: time.Now().UTC(), DevOrigin: opts.DevOrigin}
 
 	ln, err := net.Listen("tcp", opts.Listen)

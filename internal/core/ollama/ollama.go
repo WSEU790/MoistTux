@@ -27,9 +27,14 @@ type Client struct {
 	kind   string       // "ollama" or "openai" (OpenAI-compatible, e.g. Colibri)
 	name   string       // engine name shown to the operator
 	apiKey string       // optional bearer key (OpenAI-compatible engines)
+	// tokenFn supplies a fresh bearer token per request (ChatGPT sign-in).
+	tokenFn func(context.Context) (string, error)
+	// onLimit is called when the provider reports a usage limit.
+	onLimit func()
+	rs      *rsState // ChatGPT (Responses API) state
 }
 
-// Kind is "ollama" or "openai".
+// Kind is "ollama", "openai" (OpenAI-compatible) or "responses" (ChatGPT plan).
 func (c *Client) Kind() string { return c.kind }
 
 // Name is the engine's display name ("Ollama", "Colibri").
@@ -50,6 +55,9 @@ func (c *Client) BaseURL() string { return c.base }
 
 // IsLocal reports whether the endpoint is on this machine (privacy indicator).
 func (c *Client) IsLocal() bool {
+	if c.kind == "responses" {
+		return false // ChatGPT always runs at OpenAI
+	}
 	u, _ := url.Parse(c.base)
 	h := u.Hostname()
 	return h == "127.0.0.1" || h == "localhost" || h == "::1"
@@ -58,6 +66,8 @@ func (c *Client) IsLocal() bool {
 type APIError struct {
 	Status int
 	Msg    string
+	Code   string // machine-readable error code, when the provider sends one
+	Param  string
 }
 
 func (e *APIError) Error() string { return fmt.Sprintf("AI engine HTTP %d: %s", e.Status, e.Msg) }
@@ -78,7 +88,13 @@ func (c *Client) req(ctx context.Context, method, path string, body any) (*http.
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
-	if c.apiKey != "" {
+	if c.tokenFn != nil {
+		tok, err := c.tokenFn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("Authorization", "Bearer "+tok)
+	} else if c.apiKey != "" {
 		r.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 	resp, err := c.hc.Do(r)
@@ -88,7 +104,8 @@ func (c *Client) req(ctx context.Context, method, path string, body any) (*http.
 	if resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, &APIError{Status: resp.StatusCode, Msg: errorText(b)}
+		code, param := errorCode(b)
+		return nil, &APIError{Status: resp.StatusCode, Msg: errorText(b), Code: code, Param: param}
 	}
 	return resp, nil
 }
@@ -112,7 +129,30 @@ func errorText(b []byte) string {
 			return o.Message
 		}
 	}
+	var d struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(b, &d) == nil && d.Detail != "" {
+		return d.Detail
+	}
 	return strings.TrimSpace(string(b))
+}
+
+// errorCode extracts error.code and error.param from an OpenAI error body.
+func errorCode(b []byte) (code, param string) {
+	var e struct {
+		Error struct {
+			Code  any    `json:"code"`
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(b, &e) == nil {
+		if s, ok := e.Error.Code.(string); ok {
+			code = s
+		}
+		param = e.Error.Param
+	}
+	return code, param
 }
 
 func (c *Client) getJSON(ctx context.Context, method, path string, body, out any) error {
@@ -131,6 +171,9 @@ func (c *Client) getJSON(ctx context.Context, method, path string, body, out any
 // ---------------------------------------------------------------- discovery
 
 func (c *Client) Version(ctx context.Context) (string, error) {
+	if c.kind == "responses" {
+		return c.rsVersion(ctx)
+	}
 	if c.kind == "openai" {
 		return c.oaVersion(ctx)
 	}
@@ -154,9 +197,14 @@ type Model struct {
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details"`
+	// DisplayName is the provider's label (ChatGPT models), if any.
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 func (c *Client) List(ctx context.Context) ([]Model, error) {
+	if c.kind == "responses" {
+		return c.rsList(ctx)
+	}
 	if c.kind == "openai" {
 		return c.oaList(ctx)
 	}
@@ -177,6 +225,9 @@ type ShowResponse struct {
 }
 
 func (c *Client) Show(ctx context.Context, model string) (*ShowResponse, error) {
+	if c.kind == "responses" {
+		return c.rsShow(ctx, model)
+	}
 	if c.kind == "openai" {
 		return c.oaShow(ctx, model)
 	}
@@ -240,7 +291,7 @@ type Running struct {
 }
 
 func (c *Client) PS(ctx context.Context) ([]Running, error) {
-	if c.kind == "openai" {
+	if c.kind != "ollama" {
 		return []Running{}, nil
 	}
 	var r struct{ Models []Running }
@@ -251,7 +302,7 @@ func (c *Client) PS(ctx context.Context) ([]Running, error) {
 }
 
 func (c *Client) Delete(ctx context.Context, model string) error {
-	if c.kind == "openai" {
+	if c.kind != "ollama" {
 		return errManaged(c)
 	}
 	return c.getJSON(ctx, "DELETE", "/api/delete", map[string]string{"model": model}, nil)
@@ -267,7 +318,7 @@ type PullProgress struct {
 }
 
 func (c *Client) Pull(ctx context.Context, model string, fn func(PullProgress)) error {
-	if c.kind == "openai" {
+	if c.kind != "ollama" {
 		return errManaged(c)
 	}
 	resp, err := c.req(ctx, "POST", "/api/pull", map[string]any{"model": model, "stream": true})
@@ -364,6 +415,9 @@ type ChatResult struct {
 
 // Chat streams a chat completion, calling onDelta for each content fragment.
 func (c *Client) Chat(ctx context.Context, req ChatRequest, onDelta func(content, thinking string)) (*ChatResult, error) {
+	if c.kind == "responses" {
+		return c.rsChat(ctx, req, onDelta)
+	}
 	if c.kind == "openai" {
 		return c.oaChat(ctx, req, onDelta)
 	}
