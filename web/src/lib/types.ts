@@ -325,6 +325,8 @@ export interface Resolution {
   tools: boolean;
 }
 export interface AIStatus {
+  engine: string; // Ollama | Colibri
+  provider: string; // ollama | colibri
   reachable: boolean;
   url: string;
   local: boolean;

@@ -401,6 +401,23 @@ updates with `events`. Use the components in `components/UI.tsx` and the CSS
 variables in `styles/` so all four themes keep working. Run
 `npm --prefix web run typecheck`.
 
+### AI engines (Ollama and Colibri)
+
+`internal/core/ollama` is the inference client. `Client.kind` is `ollama`
+(the Ollama REST API) or `openai` (OpenAI-compatible, used for Colibri,
+`openai.go`). The engine code is identical for both:
+* `Chat` streams `/v1/chat/completions` SSE, with content,
+  `reasoning_content` as thinking, and tool-call deltas accumulated by index.
+* Ollama-style history gets synthetic `tool_call_id`s.
+* `List`/`Show` use `/v1/models`. `Version` uses `/health`, which returns 503
+  while Colibri loads.
+* `Pull`/`Delete` return "Colibri manages its own models".
+
+Settings `provider`, `colibri_url` and a write-only `colibri_api_key` (sealed
+with DPAPI as `colibri_key_sealed`, never returned; "-" clears it) choose the
+engine. `openai_test.go` covers streaming tool calls, non-streamed replies,
+authentication, history conversion and error mapping.
+
 ### Website checks and disk forecasts
 
 * `internal/core/sitecheck`: checks (`site_checks`, results in

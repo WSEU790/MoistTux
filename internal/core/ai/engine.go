@@ -16,6 +16,7 @@ import (
 	"github.com/WSEU790/MoistTux/internal/core/forecast"
 	"github.com/WSEU790/MoistTux/internal/core/knowledge"
 	"github.com/WSEU790/MoistTux/internal/core/ollama"
+	"github.com/WSEU790/MoistTux/internal/core/secrets"
 	"github.com/WSEU790/MoistTux/internal/core/sitecheck"
 	"github.com/WSEU790/MoistTux/internal/core/store"
 )
@@ -34,6 +35,8 @@ type Deps struct {
 	Sites *sitecheck.Runner
 	// Forecast predicts disk-full dates (may be nil in tests).
 	Forecast *forecast.Engine
+	// Protector seals secrets such as an AI engine API key.
+	Protector secrets.Protector
 }
 
 // ResolveServer accepts an ID, a display name or a hostname.
@@ -61,6 +64,16 @@ func (d *Deps) ResolveServer(ctx context.Context, ref string) (*store.Server, er
 
 // Settings are persisted under "ai.settings".
 type Settings struct {
+	// Provider is the inference engine: "ollama" (default) or "colibri"
+	// (an OpenAI-compatible local engine, see internal/core/ollama/openai.go).
+	Provider   string `json:"provider"`
+	ColibriURL string `json:"colibri_url"`
+	// ColibriKey is write-only: a new API key from the operator ("-" clears
+	// it). It is sealed into ColibriKeySealed and never returned.
+	ColibriKey       string `json:"colibri_api_key,omitempty"`
+	ColibriKeySealed string `json:"colibri_key_sealed,omitempty"`
+	ColibriKeySet    bool   `json:"colibri_key_set"`
+
 	OllamaURL     string            `json:"ollama_url"`
 	Temperature   float64           `json:"temperature"`
 	NumCtx        int               `json:"num_ctx"`
@@ -72,10 +85,23 @@ type Settings struct {
 }
 
 func DefaultSettings() Settings {
-	return Settings{OllamaURL: ollama.DefaultURL, Temperature: 0.2, NumCtx: 16384, MaxToolRounds: 12, KeepAlive: "15m", Roles: map[string]string{}, ApprovalTTL: 60, InvestPerHour: 6}
+	return Settings{Provider: "ollama", ColibriURL: ollama.DefaultColibriURL, OllamaURL: ollama.DefaultURL, Temperature: 0.2, NumCtx: 16384, MaxToolRounds: 12, KeepAlive: "15m", Roles: map[string]string{}, ApprovalTTL: 60, InvestPerHour: 6}
 }
 
 func (s *Settings) Validate() error {
+	switch s.Provider {
+	case "":
+		s.Provider = "ollama"
+	case "ollama", "colibri":
+	default:
+		return fmt.Errorf("AI engine must be ollama or colibri")
+	}
+	if s.ColibriURL == "" {
+		s.ColibriURL = ollama.DefaultColibriURL
+	}
+	if _, err := ollama.NewOpenAI(s.ColibriURL, "", "Colibri"); err != nil {
+		return err
+	}
 	if _, err := ollama.New(s.OllamaURL); err != nil {
 		return err
 	}
@@ -137,7 +163,19 @@ func NewEngine(deps *Deps) *Engine {
 }
 
 func (e *Engine) apply(s Settings) {
-	c, err := ollama.New(s.OllamaURL)
+	var c *ollama.Client
+	var err error
+	if s.Provider == "colibri" {
+		key := ""
+		if s.ColibriKeySealed != "" && e.deps.Protector != nil {
+			if b, uerr := secrets.Open(e.deps.Protector, s.ColibriKeySealed); uerr == nil {
+				key = string(b)
+			}
+		}
+		c, err = ollama.NewOpenAI(s.ColibriURL, key, "Colibri")
+	} else {
+		c, err = ollama.New(s.OllamaURL)
+	}
 	if err != nil {
 		c, _ = ollama.New(ollama.DefaultURL)
 	}
@@ -147,7 +185,15 @@ func (e *Engine) apply(s Settings) {
 	e.mu.Unlock()
 }
 
-func (e *Engine) Settings() Settings { e.mu.RLock(); defer e.mu.RUnlock(); return e.settings }
+// Settings returns the settings without secrets (the API key stays sealed).
+func (e *Engine) Settings() Settings {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	s := e.settings
+	s.ColibriKeySet = s.ColibriKeySealed != ""
+	s.ColibriKey, s.ColibriKeySealed = "", ""
+	return s
+}
 func (e *Engine) Client() *ollama.Client {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -159,17 +205,36 @@ func (e *Engine) UpdateSettings(ctx context.Context, s Settings, by string) erro
 		return err
 	}
 	old := e.Settings()
+	e.mu.RLock()
+	s.ColibriKeySealed = e.settings.ColibriKeySealed // keep the stored key unless replaced
+	e.mu.RUnlock()
+	switch key := strings.TrimSpace(s.ColibriKey); {
+	case key == "-":
+		s.ColibriKeySealed = ""
+	case key != "":
+		if e.deps.Protector == nil {
+			return fmt.Errorf("cannot store an API key: no secret protector")
+		}
+		sealed, err := secrets.Seal(e.deps.Protector, []byte(key))
+		if err != nil {
+			return err
+		}
+		s.ColibriKeySealed = sealed
+	}
+	s.ColibriKey, s.ColibriKeySet = "", false
 	if err := e.deps.Store.PutSetting(ctx, "ai.settings", s); err != nil {
 		return err
 	}
 	e.apply(s)
-	_ = e.deps.Store.Audit(ctx, by, "ai.settings.update", "ai", map[string]any{"before": old, "after": s})
+	_ = e.deps.Store.Audit(ctx, by, "ai.settings.update", "ai", map[string]any{"before": old, "after": e.Settings()})
 	return nil
 }
 
 // ---------------------------------------------------------------- status & models
 
 type Status struct {
+	Engine    string           `json:"engine"`   // display name: Ollama, Colibri
+	Provider  string           `json:"provider"` // ollama | colibri
 	Reachable bool             `json:"reachable"`
 	URL       string           `json:"url"`
 	Local     bool             `json:"local"`
@@ -183,7 +248,7 @@ type Status struct {
 
 func (e *Engine) Status(ctx context.Context) Status {
 	c := e.Client()
-	st := Status{URL: c.BaseURL(), Local: c.IsLocal(), Running: []ollama.Running{}}
+	st := Status{Engine: c.Name(), Provider: e.Settings().Provider, URL: c.BaseURL(), Local: c.IsLocal(), Running: []ollama.Running{}}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	v, err := c.Version(ctx)
@@ -247,7 +312,7 @@ func (e *Engine) Models(ctx context.Context) ([]ModelInfo, error) {
 			mi.CapsError = err.Error()
 		}
 		mi.Caps = c
-		if budget > 0 {
+		if budget > 0 && m.Size > 0 {
 			fits := uint64(float64(m.Size)*1.2) <= budget
 			mi.FitsMemory = &fits
 		}

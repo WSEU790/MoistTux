@@ -26,7 +26,7 @@ maintenance.
 | **Server operations** | Processes (live CPU%, details, sockets); systemd services (state, health assessment, dependencies, logs, start/stop/restart/reload with verification); logs (journald or allowlisted `/var/log` files); Docker (containers, health, stats, logs, actions, images, volumes, networks, Compose projects); storage (filesystems, block devices, directory analysis, large-file report); network (interfaces, routes, DNS, sockets with bind scope, ufw/nftables/iptables listing); APT (installed, simulated updates with security classification, refresh, upgrade, history). |
 | **Security center** | Effective `sshd -T` configuration with findings, SSH/sudo authentication activity, local accounts, sensitive-file permissions, UID 0 accounts, firewall state, pending security updates and reboot-required status. |
 | **Monitoring** | Deterministic rules with sustain windows for CPU, memory, swap, load, disk, inodes and temperature; rules for failed units, unhealthy, exited and restarting containers, security updates, reboot-required, security findings, unexpected reboots and offline agents. De-duplication, cooldowns, storm suppression, and incidents that group related alerts. **Website checks** run from your PC (status, expected text, response time, uptime, TLS certificate expiry) and alert on the hosting server after consecutive failures. **Disk-full forecasts** fit 14 days of hourly per-filesystem history and warn 14 and 3 days ahead when the trend is reliable. |
-| **AI core** | Ollama detection, model discovery, capability detection (`/api/show`), tool calling with streaming, a JSON-schema fallback for models without tools, model roles with automatic selection, hardware-aware recommendations, explicit model downloads, 46 typed tools, a catalog of 111 administration commands it can run with sudo (apt install/remove, systemctl enable/disable, journal clean-up, ufw rules, certbot, Docker clean-up and more; arguments validated, no shell), shell commands as root that you approve one by one (signed by NEXUS and verified on the server), a built-in library of 24 Linux runbooks it searches before acting, four operational modes, a per-server policy engine, approvals with impact previews, verification after every change, persistent operational memory, and rate-limited automatic incident investigations. |
+| **AI core** | Runs on **Ollama** or **Colibri** (choose in Settings → AI engine; Colibri is used through its OpenAI-compatible API with tool calling, optional API key stored encrypted). Ollama detection, model discovery, capability detection (`/api/show`), tool calling with streaming, a JSON-schema fallback for models without tools, model roles with automatic selection, hardware-aware recommendations, explicit model downloads, 46 typed tools, a catalog of 111 administration commands it can run with sudo (apt install/remove, systemctl enable/disable, journal clean-up, ufw rules, certbot, Docker clean-up and more; arguments validated, no shell), shell commands as root that you approve one by one (signed by NEXUS and verified on the server), a built-in library of 24 Linux runbooks it searches before acting, four operational modes, a per-server policy engine, approvals with impact previews, verification after every change, persistent operational memory, and rate-limited automatic incident investigations. |
 | **Desktop UI** | Command Center (customisable layout), Fleet, server workspace (overview with historical charts and nine operational tabs), AI Command Center, Incidents and Alerts, Approvals, interactive Topology, Policies editor, Memory, Activity and hash-chained Audit, and Settings. Four themes (Graphite, Midnight, Tactical, Light) plus custom accent and density. |
 | **Persistence** | SQLite (WAL) with migrations. Raw telemetry is kept 48 h and 5-minute rollups 30 days, separately from configuration and audit data. |
 | **Notifications** | In-app and native desktop notifications, plus opt-in Discord, Telegram and SMTP with secrets sealed by DPAPI. |
@@ -102,10 +102,19 @@ Windows app only.
 
 ### 4. Local AI
 
-Install [Ollama](https://ollama.com) and run `ollama serve`. NEXUS detects it on
-`127.0.0.1:11434`. Settings → AI models shows hardware-sized recommendations,
-for example `qwen2.5:7b` on a GPU with 8 GB. Models download only when you
-click Download.
+NEXUS's AI runs on your own machine, with either engine (Settings → AI engine):
+
+* **Ollama**: install [Ollama](https://ollama.com) and run `ollama serve`. NEXUS
+  detects it on `127.0.0.1:11434`, shows hardware-sized recommendations (for
+  example `qwen2.5:7b` on a GPU with 8 GB) and downloads models only when you
+  click Download.
+* **Colibri**: install [Colibri](https://github.com/JustVugg/colibri), install
+  a model with `coli`, and start it with
+  `coli serve --host 127.0.0.1 --port 8000`. In NEXUS choose **Colibri**,
+  check the address (`http://127.0.0.1:8000`), and enter an API key only if
+  you set `COLI_API_KEY`. Colibri manages its own models. NEXUS uses those
+  with tool calling (GLM, Qwen, DeepSeek, Kimi, MiMo), and Colibri answers one
+  request at a time, so large models on modest hardware are slow.
 
 ## Releases and updates
 

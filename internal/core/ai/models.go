@@ -106,7 +106,7 @@ type Resolution struct {
 // says when it had to deviate from the operator's preference.
 func Resolve(role string, assigned map[string]string, models []ModelInfo, budget uint64) (Resolution, error) {
 	if len(models) == 0 {
-		return Resolution{}, fmt.Errorf("no models are installed in Ollama; open Settings → AI models to download one")
+		return Resolution{}, fmt.Errorf("the AI engine reports no models; open Settings → AI models (Ollama: download one; Colibri: install one with coli)")
 	}
 	installed := map[string]ModelInfo{}
 	for _, m := range models {
@@ -131,7 +131,7 @@ func Resolve(role string, assigned map[string]string, models []ModelInfo, budget
 	}
 	notice := ""
 	if pref != "" {
-		notice = fmt.Sprintf("The %s model %q is not installed in Ollama", role, pref)
+		notice = fmt.Sprintf("The %s model %q is not available from the AI engine", role, pref)
 	}
 	if g := assigned["general"]; role != "general" && g != "" {
 		if m, ok := lookup(g); ok {

@@ -305,9 +305,9 @@ function AIPanel() {
           <Icon name="ai" size={20} />
         </div>
         <div className="grow">
-          <div style={{ fontWeight: 600 }}>{!ai ? "Checking Ollama…" : !ai.reachable ? "Local AI unavailable" : general ? general.model : "No model installed"}</div>
+          <div style={{ fontWeight: 600 }}>{!ai ? "Checking the AI engine…" : !ai.reachable ? "Local AI unavailable" : general ? general.model : "No model installed"}</div>
           <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>
-            {!ai ? "" : !ai.reachable ? ai.error : `Ollama ${ai.version} · ${ai.models} models · ${ai.local ? "runs on this machine" : "remote endpoint"}`}
+            {!ai ? "" : !ai.reachable ? ai.error : `${ai.engine}${ai.version && ai.version !== "ready" ? " " + ai.version : ""} · ${ai.models} models · ${ai.local ? "runs on this machine" : "remote endpoint"}`}
           </div>
         </div>
         <span className={"chip " + (overview?.monitoring?.auto_investigate ? "accent" : "")}>{overview?.monitoring?.auto_investigate ? "Auto-investigation on" : "Recommend-only"}</span>
@@ -315,7 +315,7 @@ function AIPanel() {
       {ai && !ai.reachable && (
         <div className="notice warn" style={{ marginBottom: 12 }}>
           <Icon name="alert" size={15} />
-          <div>Monitoring and dashboards keep working. Start Ollama (<span className="mono">ollama serve</span>) or set its address in <a href="#/settings/ai">Settings → AI</a>.</div>
+          <div>Monitoring and dashboards keep working. Start Ollama (<span className="mono">ollama serve</span>) or Colibri (<span className="mono">coli serve</span>), or set the engine and its address in <a href="#/settings/ai">Settings → AI</a>.</div>
         </div>
       )}
       <form onSubmit={(e) => { e.preventDefault(); ask(q); }} className="row" style={{ marginBottom: 12 }}>
@@ -364,7 +364,7 @@ function FirstRun() {
         <div className="label accent-t" style={{ marginBottom: 10 }}>Welcome to NEXUS</div>
         <h1 style={{ fontFamily: "var(--font-display)", fontSize: 40, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 10px" }}>Connect your first Linux server.</h1>
         <p className="dim" style={{ fontSize: 16, maxWidth: 680, marginTop: 0 }}>
-          NEXUS manages servers through a small, authenticated agent. It never needs root SSH for monitoring, and its AI runs locally through Ollama.
+          NEXUS manages servers through a small, authenticated agent. It never needs root SSH for monitoring, and its AI runs locally through Ollama or Colibri.
         </p>
         <div className="grid g3" style={{ marginTop: 28 }}>
           {[
@@ -383,7 +383,7 @@ function FirstRun() {
           <a className="btn primary" href="#/fleet?add=1"><Icon name="plus" /> Add server</a>
           <a className="btn" href="#/settings/ai"><Icon name="ai" /> Configure local AI</a>
           <span className="faint" style={{ fontSize: "var(--fs-xs)", marginLeft: 8 }}>
-            Ollama: {ai ? (ai.reachable ? `connected (v${ai.version}, ${ai.models} models)` : "not reachable") : "checking…"} · Core identity {bootstrap?.core_fingerprint?.slice(0, 16)}…
+            {ai?.engine ?? "AI engine"}: {ai ? (ai.reachable ? `connected (${ai.models} models)` : "not reachable") : "checking…"} · Core identity {bootstrap?.core_fingerprint?.slice(0, 16)}…
           </span>
         </div>
       </div>

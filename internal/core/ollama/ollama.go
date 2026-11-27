@@ -1,6 +1,8 @@
-// Package ollama is a client for the documented Ollama REST API
-// (https://github.com/ollama/ollama/blob/main/docs/api.md). It is the only
-// inference backend NEXUS requires; nothing here talks to a cloud service.
+// Package ollama is NEXUS's inference client. It speaks the documented Ollama
+// REST API (https://github.com/ollama/ollama/blob/main/docs/api.md) and, for
+// engines such as Colibri, the OpenAI-compatible chat API (openai.go). Both
+// run on the operator's own machines; nothing here talks to a cloud service
+// unless the operator points it at one.
 package ollama
 
 import (
@@ -20,9 +22,18 @@ import (
 const DefaultURL = "http://127.0.0.1:11434"
 
 type Client struct {
-	base string
-	hc   *http.Client // no overall timeout: streams can be long
+	base   string
+	hc     *http.Client // no overall timeout: streams can be long
+	kind   string       // "ollama" or "openai" (OpenAI-compatible, e.g. Colibri)
+	name   string       // engine name shown to the operator
+	apiKey string       // optional bearer key (OpenAI-compatible engines)
 }
+
+// Kind is "ollama" or "openai".
+func (c *Client) Kind() string { return c.kind }
+
+// Name is the engine's display name ("Ollama", "Colibri").
+func (c *Client) Name() string { return c.name }
 
 func New(base string) (*Client, error) {
 	if base == "" {
@@ -32,7 +43,7 @@ func New(base string) (*Client, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("invalid Ollama URL %q", base)
 	}
-	return &Client{base: u.String(), hc: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 10 * time.Minute, IdleConnTimeout: 90 * time.Second}}}, nil
+	return &Client{base: u.String(), kind: "ollama", name: "Ollama", hc: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Minute, IdleConnTimeout: 90 * time.Second}}}, nil
 }
 
 func (c *Client) BaseURL() string { return c.base }
@@ -49,7 +60,7 @@ type APIError struct {
 	Msg    string
 }
 
-func (e *APIError) Error() string { return fmt.Sprintf("ollama %d: %s", e.Status, e.Msg) }
+func (e *APIError) Error() string { return fmt.Sprintf("AI engine HTTP %d: %s", e.Status, e.Msg) }
 
 func (c *Client) req(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var rd io.Reader
@@ -67,20 +78,41 @@ func (c *Client) req(ctx context.Context, method, path string, body any) (*http.
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
+	if c.apiKey != "" {
+		r.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.hc.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("Ollama is not reachable at %s: %w", c.base, err)
+		return nil, fmt.Errorf("%s is not reachable at %s: %w", c.name, c.base, err)
 	}
 	if resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		var e struct{ Error string }
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		if json.Unmarshal(b, &e) != nil || e.Error == "" {
-			e.Error = strings.TrimSpace(string(b))
-		}
-		return nil, &APIError{Status: resp.StatusCode, Msg: e.Error}
+		return nil, &APIError{Status: resp.StatusCode, Msg: errorText(b)}
 	}
 	return resp, nil
+}
+
+// errorText extracts the message from Ollama ({"error": "..."}) and OpenAI
+// ({"error": {"message": "..."}}) error bodies.
+func errorText(b []byte) string {
+	var e struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(b, &e) == nil && len(e.Error) > 0 {
+		var s string
+		if json.Unmarshal(e.Error, &s) == nil && s != "" {
+			return s
+		}
+		var o struct {
+			Message string `json:"message"`
+			Code    any    `json:"code"`
+		}
+		if json.Unmarshal(e.Error, &o) == nil && o.Message != "" {
+			return o.Message
+		}
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func (c *Client) getJSON(ctx context.Context, method, path string, body, out any) error {
@@ -99,6 +131,9 @@ func (c *Client) getJSON(ctx context.Context, method, path string, body, out any
 // ---------------------------------------------------------------- discovery
 
 func (c *Client) Version(ctx context.Context) (string, error) {
+	if c.kind == "openai" {
+		return c.oaVersion(ctx)
+	}
 	var v struct{ Version string }
 	err := c.getJSON(ctx, "GET", "/api/version", nil, &v)
 	return v.Version, err
@@ -122,6 +157,9 @@ type Model struct {
 }
 
 func (c *Client) List(ctx context.Context) ([]Model, error) {
+	if c.kind == "openai" {
+		return c.oaList(ctx)
+	}
 	var r struct{ Models []Model }
 	if err := c.getJSON(ctx, "GET", "/api/tags", nil, &r); err != nil {
 		return nil, err
@@ -139,6 +177,9 @@ type ShowResponse struct {
 }
 
 func (c *Client) Show(ctx context.Context, model string) (*ShowResponse, error) {
+	if c.kind == "openai" {
+		return c.oaShow(ctx, model)
+	}
 	var r ShowResponse
 	return &r, c.getJSON(ctx, "POST", "/api/show", map[string]string{"model": model}, &r)
 }
@@ -199,6 +240,9 @@ type Running struct {
 }
 
 func (c *Client) PS(ctx context.Context) ([]Running, error) {
+	if c.kind == "openai" {
+		return []Running{}, nil
+	}
 	var r struct{ Models []Running }
 	if err := c.getJSON(ctx, "GET", "/api/ps", nil, &r); err != nil {
 		return nil, err
@@ -207,6 +251,9 @@ func (c *Client) PS(ctx context.Context) ([]Running, error) {
 }
 
 func (c *Client) Delete(ctx context.Context, model string) error {
+	if c.kind == "openai" {
+		return errManaged(c)
+	}
 	return c.getJSON(ctx, "DELETE", "/api/delete", map[string]string{"model": model}, nil)
 }
 
@@ -220,6 +267,9 @@ type PullProgress struct {
 }
 
 func (c *Client) Pull(ctx context.Context, model string, fn func(PullProgress)) error {
+	if c.kind == "openai" {
+		return errManaged(c)
+	}
 	resp, err := c.req(ctx, "POST", "/api/pull", map[string]any{"model": model, "stream": true})
 	if err != nil {
 		return err
@@ -314,6 +364,9 @@ type ChatResult struct {
 
 // Chat streams a chat completion, calling onDelta for each content fragment.
 func (c *Client) Chat(ctx context.Context, req ChatRequest, onDelta func(content, thinking string)) (*ChatResult, error) {
+	if c.kind == "openai" {
+		return c.oaChat(ctx, req, onDelta)
+	}
 	req.Stream = true
 	resp, err := c.req(ctx, "POST", "/api/chat", req)
 	if err != nil {

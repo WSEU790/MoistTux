@@ -59,7 +59,7 @@ export function AICenter({ convId }: { convId?: string }) {
         </div>
         <div style={{ padding: 12, borderTop: "1px solid var(--line)", fontSize: "var(--fs-xs)" }} className="faint">
           <span className={"dot " + (ai?.reachable ? "ok" : "crit")} style={{ marginRight: 6 }} />
-          {ai?.reachable ? `Ollama ${ai.version} · ${ai.local ? "local" : "remote"} · private` : "Ollama not reachable"}
+          {ai?.reachable ? `${ai.engine}${ai.version && ai.version !== "ready" ? " " + ai.version : ""} · ${ai.local ? "local" : "remote"} · private` : `${ai?.engine ?? "AI engine"} not reachable`}
         </div>
       </aside>
       {convId ? <Thread key={convId} id={convId} onChanged={list.reload} /> : <Welcome onStart={create} />}
@@ -80,10 +80,10 @@ function Welcome({ onStart }: { onStart: (m?: Mode) => void }) {
         <div className="label accent-t">AI Command Center</div>
         <h1 style={{ fontFamily: "var(--font-display)", fontSize: 34, fontWeight: 600, margin: "8px 0 8px", letterSpacing: "-0.02em" }}>Talk to your infrastructure.</h1>
         <p className="dim" style={{ fontSize: 15, maxWidth: 640 }}>
-          NEXUS investigates with typed, audited tools before answering, separates facts from hypotheses, and routes every change through your execution policy. Inference runs locally in Ollama.
+          NEXUS investigates with typed, audited tools before answering, separates facts from hypotheses, and routes every change through your execution policy. Inference runs locally in Ollama or Colibri.
         </p>
-        {ai && !ai.reachable && <div style={{ margin: "16px 0" }}><Notice kind="warn">Ollama is not reachable at {ai.url}: {ai.error}. <a href="#/settings/ai">Configure the local AI</a>.</Notice></div>}
-        {ai?.reachable && ai.models === 0 && <div style={{ margin: "16px 0" }}><Notice kind="warn">Ollama is running but has no models. <a href="#/settings/ai">Download a recommended model</a>.</Notice></div>}
+        {ai && !ai.reachable && <div style={{ margin: "16px 0" }}><Notice kind="warn">{ai.engine} is not reachable at {ai.url}: {ai.error}. <a href="#/settings/ai">Configure the local AI</a>.</Notice></div>}
+        {ai?.reachable && ai.models === 0 && <div style={{ margin: "16px 0" }}><Notice kind="warn">{ai.engine} is running but has no models. <a href="#/settings/ai">Download a recommended model</a>.</Notice></div>}
         <div className="grid g2" style={{ marginTop: 24 }}>
           {MODES.map((m) => (
             <button key={m.id} className="panel" style={{ textAlign: "left", padding: 16, cursor: "pointer", borderColor: "var(--line)" }} onClick={() => onStart(m.id)}>
@@ -296,7 +296,7 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
         )}
         <div style={{ padding: 16, borderTop: "1px solid var(--line)" }} className="faint">
           <div className="label" style={{ marginBottom: 6 }}>Privacy</div>
-          <div style={{ fontSize: 12 }}>Prompts, logs and telemetry are sent only to your Ollama endpoint. Credentials are never included in prompts.</div>
+          <div style={{ fontSize: 12 }}>Prompts, logs and telemetry are sent only to your own AI engine (Ollama or Colibri). Credentials are never included in prompts.</div>
         </div>
       </aside>
       {openExe && <ExecDrawer e={openExe} onClose={() => setOpenExe(null)} />}

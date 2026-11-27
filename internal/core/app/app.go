@@ -171,7 +171,7 @@ func Start(ctx context.Context, opts Options) (*App, error) {
 		return nil, fmt.Errorf("knowledge library: %w", err)
 	}
 	a.Knowledge = lib
-	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol, Knowledge: lib}
+	deps := &ai.Deps{Store: st, Fleet: a.Fleet, Bus: a.Bus, Log: logger, Registry: reg, Policies: pol, Knowledge: lib, Protector: prot}
 	a.AI = ai.NewEngine(deps)
 	a.Monitor.SetInvestigator(func(ctx context.Context, inc *store.Incident) {
 		p, _ := pol.Effective(ctx, inc.ServerID)

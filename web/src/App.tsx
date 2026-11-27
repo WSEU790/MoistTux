@@ -241,7 +241,7 @@ function AIPill() {
   return (
     <a href="#/settings/ai" className={"chip " + (ai?.reachable ? (general ? "accent" : "warn") : "crit")} title={ai?.error ?? ai?.url} style={{ textDecoration: "none" }}>
       <Icon name="ai" size={12} />
-      {ai === null ? "AI status…" : !ai.reachable ? "Ollama offline" : general ? general.model : "No model installed"}
+      {ai === null ? "AI status…" : !ai.reachable ? `${ai.engine || "AI engine"} offline` : general ? general.model : "No model installed"}
     </a>
   );
 }
@@ -341,7 +341,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       { label: "Automation Policies", sub: "What the AI may do", icon: "policy", go: () => navigate("/policies") },
       { label: "AI Memory", sub: "Operational knowledge", icon: "memory", go: () => navigate("/memory") },
       { label: "Activity & Audit", sub: "Every action, hash-chained", icon: "audit", go: () => navigate("/activity") },
-      { label: "Settings · AI models", sub: "Ollama and model roles", icon: "ai", go: () => navigate("/settings/ai") },
+      { label: "Settings · AI engine", sub: "Ollama or Colibri, model roles", icon: "ai", go: () => navigate("/settings/ai") },
       { label: "Settings · Appearance", sub: "Themes and density", icon: "settings", go: () => navigate("/settings/appearance") },
       { label: "Settings · Monitoring", sub: "Thresholds and intervals", icon: "activity", go: () => navigate("/settings/monitoring") },
     ];
