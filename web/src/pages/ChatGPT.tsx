@@ -6,7 +6,7 @@ import { ErrorNote, Modal, Notice, SkeletonRows } from "../components/UI";
 
 export type ChatGPTStatus = {
   linked: boolean; plan_enabled: boolean; email?: string; name?: string; registered: boolean; linked_at?: string; welcome_seen: boolean;
-  flow?: "waiting" | "done" | "declined" | "failed"; flow_error?: string; auth_url?: string; last_error?: string; usage_limited: boolean; usage_url: string; can_store_credentials: boolean;
+  flow?: "waiting" | "done" | "declined" | "failed"; flow_error?: string; auth_url?: string; callback_url?: string; listening: boolean; last_error?: string; usage_limited: boolean; usage_url: string; can_store_credentials: boolean;
 };
 
 export const USAGE_URL = "https://chatgpt.com/settings/usage";
@@ -99,6 +99,7 @@ export function ChatGPTCard({ active, onActivate }: { active: boolean; onActivat
                 {s.auth_url && <a className="btn sm" href={s.auth_url} target="_blank" rel="noreferrer noopener">Open the sign-in page again</a>}
                 <button className="btn ghost sm" onClick={() => api.post("/api/ai/chatgpt/cancel").then(st.reload)}>Cancel</button>
               </div>
+              <PasteFinish s={s} onDone={() => { st.reload(); reloadAI(); }} />
             </div>
           ) : (
             <button className="btn" style={{ background: "#000", color: "#fff", borderColor: "#000" }} disabled={busy || !s.can_store_credentials} onClick={() => signIn()}>
@@ -127,7 +128,12 @@ export function ChatGPTCard({ active, onActivate }: { active: boolean; onActivat
               <button className="btn primary sm" onClick={() => onActivate()}>Use ChatGPT as the AI engine</button>
             </div>
           )}
-          {waiting && <div className="row faint" style={{ marginTop: 10, gap: 8, fontSize: 12 }}><Icon name="refresh" size={12} className="spin" /> Finish signing in in your browser… <button className="btn ghost sm" onClick={() => api.post("/api/ai/chatgpt/cancel").then(st.reload)}>Cancel</button></div>}
+          {waiting && (
+            <div className="col" style={{ marginTop: 10, gap: 8 }}>
+              <div className="row faint" style={{ gap: 8, fontSize: 12 }}><Icon name="refresh" size={12} className="spin" /> Finish signing in in your browser… <button className="btn ghost sm" onClick={() => api.post("/api/ai/chatgpt/cancel").then(st.reload)}>Cancel</button></div>
+              <PasteFinish s={s} onDone={() => { st.reload(); reloadAI(); }} />
+            </div>
+          )}
         </div>
       )}
       {s.linked && !s.plan_enabled && (
@@ -149,6 +155,51 @@ export function ChatGPTCard({ active, onActivate }: { active: boolean; onActivat
         With ChatGPT as the engine, your prompts and everything the AI's tools return (server names, logs, command output, telemetry) are sent to OpenAI. Automatic incident investigations use your plan too. Approvals and command policies still apply: ChatGPT can only use NEXUS's typed tools. Sign-in tokens are stored encrypted with your Windows account and are never shown to the model.
         {" "}Plus plans share a 5-hour usage limit across all apps that use your ChatGPT plan.
       </Notice>
+    </div>
+  );
+}
+
+/** Fallback when the browser cannot reach NEXUS's loopback callback. */
+function PasteFinish({ s, onDone }: { s: ChatGPTStatus; onDone: () => void }) {
+  const { toast } = useApp();
+  const [open, setOpen] = useState(false);
+  const [addr, setAddr] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!open) {
+    return (
+      <div className="faint" style={{ fontSize: 12 }}>
+        Browser says “This site can't be reached” after you approve?{" "}
+        <button className="btn ghost sm" onClick={() => setOpen(true)}>Finish with the address instead</button>
+      </div>
+    );
+  }
+  const submit = async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await api.post("/api/ai/chatgpt/complete", { url: addr });
+      toast({ title: "ChatGPT is linked", kind: "ok" });
+      setAddr("");
+      setOpen(false);
+      onDone();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      <div className="dim" style={{ fontSize: 12.5 }}>
+        In the browser tab that shows the error, copy the whole address from the address bar{s.callback_url ? <> (it starts with <span className="mono">{s.callback_url.replace(/\/auth\/callback$/, "")}</span>)</> : null} and paste it here. It works once and only for this sign-in.
+      </div>
+      <form className="row" style={{ gap: 6 }} onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        <input className="input mono grow" autoFocus placeholder="http://127.0.0.1:1455/auth/callback?code=…" value={addr} onChange={(e) => setAddr(e.target.value)} />
+        <button className="btn primary sm" disabled={busy || !addr.trim()}>Finish sign-in</button>
+      </form>
+      <ErrorNote error={err} />
+      {!s.listening && <div className="warn-t" style={{ fontSize: 12 }}>NEXUS is not listening for the browser right now, so pasting the address is the way to finish.</div>}
     </div>
   );
 }

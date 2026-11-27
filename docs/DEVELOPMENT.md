@@ -436,6 +436,13 @@ ChatGPT" plan-usage flow for open-source, locally hosted apps
   (RS256/ES256 against the JWKS, issuer, audience = client ID, expiry, nonce)
   and requires `chatgpt.tokens.use.direct` before inference. Tokens are sealed
   with the protector in setting `ai.chatgpt`.
+* One loopback callback server serves every pending attempt (looked up by
+  `state`, single use, 10 minutes), so finishing in an older tab after a
+  second click still works. Pending attempts are sealed in setting
+  `ai.chatgpt.pending` and the listener is reopened on the same port after a
+  restart. If the browser cannot reach the callback ("This site can't be
+  reached"), the operator pastes the address into the card and
+  `POST /api/ai/chatgpt/complete` finishes the same validated flow.
 * `AccessToken` refreshes two minutes before expiry, serialized because the
   refresh token rotates. Unusable refresh tokens (`invalid_grant`,
   `refresh_token_reused`, …) clear the tokens and ask for a new sign-in;

@@ -41,6 +41,22 @@ func (s *Server) chatgptRoutes(m *http.ServeMux) {
 		}
 		writeJSON(w, 200, map[string]any{"auth_url": u, "opened": g.OpenBrowser != nil})
 	}))
+	// Finishes a sign-in from the address the browser shows when it cannot
+	// reach NEXUS's loopback callback ("This site can't be reached").
+	m.HandleFunc("POST /api/ai/chatgpt/complete", need(func(w http.ResponseWriter, r *http.Request, g *chatgpt.Manager) {
+		var in struct {
+			URL string `json:"url"`
+		}
+		if err := decode(r, &in); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if err := g.CompleteFromURL(in.URL); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, g.Status())
+	}))
 	m.HandleFunc("POST /api/ai/chatgpt/cancel", need(func(w http.ResponseWriter, r *http.Request, g *chatgpt.Manager) {
 		g.Cancel()
 		writeJSON(w, 200, g.Status())

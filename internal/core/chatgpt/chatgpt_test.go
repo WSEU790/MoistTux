@@ -130,9 +130,9 @@ func (f *fakeAuth) issue(w http.ResponseWriter, nonce string) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// browse plays the browser: it reads the authorization URL, "approves" and
-// follows the redirect to NEXUS's loopback callback.
-func (f *fakeAuth) browse(t *testing.T, authURL string, mutate func(q url.Values)) (int, string) {
+// approve plays OpenAI's consent page and returns the callback address the
+// browser is sent to.
+func (f *fakeAuth) approve(t *testing.T, authURL string, mutate func(q url.Values)) string {
 	t.Helper()
 	u, err := url.Parse(authURL)
 	if err != nil {
@@ -151,7 +151,13 @@ func (f *fakeAuth) browse(t *testing.T, authURL string, mutate func(q url.Values
 	if mutate != nil {
 		mutate(cb)
 	}
-	resp, err := http.Get(q.Get("redirect_uri") + "?" + cb.Encode())
+	return q.Get("redirect_uri") + "?" + cb.Encode()
+}
+
+// browse approves and follows the redirect to NEXUS's loopback callback.
+func (f *fakeAuth) browse(t *testing.T, authURL string, mutate func(q url.Values)) (int, string) {
+	t.Helper()
+	resp, err := http.Get(f.approve(t, authURL, mutate))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,5 +372,78 @@ func TestSignInFailures(t *testing.T) {
 	m.ClearLimit()
 	if _, err := m.AccessToken(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The browser can't reach the callback ("This site can't be reached"): the
+// operator pastes the address instead. Older tabs, retries and restarts
+// during sign-in keep working.
+func TestCallbackRobustness(t *testing.T) {
+	f := newFakeAuth(t)
+	defer f.srv.Close()
+	m, st, dir := newManager(t, f)
+	ctx := context.Background()
+
+	// Two clicks on Continue: finishing in the first tab still works, and
+	// both attempts share one listener.
+	u1, _ := m.Begin(ctx, BeginOptions{})
+	u2, _ := m.Begin(ctx, BeginOptions{})
+	p1, _ := url.Parse(u1)
+	p2, _ := url.Parse(u2)
+	if p1.Query().Get("redirect_uri") != p2.Query().Get("redirect_uri") {
+		t.Errorf("attempts use different listeners: %s %s", p1.Query().Get("redirect_uri"), p2.Query().Get("redirect_uri"))
+	}
+	if code, body := f.browse(t, u1, nil); code != 200 || !strings.Contains(body, "linked") {
+		t.Fatalf("older tab: %d %s", code, body)
+	}
+	if s := waitFlow(t, m, "done"); !s.Linked {
+		t.Fatalf("not linked: %+v", s)
+	}
+	// The used state cannot be replayed, and the other attempt is gone too.
+	if code, _ := f.browse(t, u2, nil); code != 400 && code != 0 {
+		t.Errorf("second attempt still accepted after sign-in: %d", code)
+	}
+	if _, err := m.SignOut(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pasting the address the browser could not open finishes the sign-in.
+	u3, _ := m.Begin(ctx, BeginOptions{})
+	cb := f.approve(t, u3, nil)
+	if err := m.CompleteFromURL("  " + cb + " "); err != nil {
+		t.Fatalf("paste: %v", err)
+	}
+	if s := m.Status(); !s.Linked || s.Flow != "done" {
+		t.Fatalf("after paste: %+v", s)
+	}
+	if err := m.CompleteFromURL(cb); err == nil {
+		t.Error("a pasted address was accepted twice")
+	}
+	if err := m.CompleteFromURL("https://chatgpt.com/"); err == nil {
+		t.Error("an unrelated address was accepted")
+	}
+	m.SignOut(ctx)
+
+	// NEXUS restarts during the sign-in: the attempt and listener come back.
+	u4, _ := m.Begin(ctx, BeginOptions{})
+	m.mu.Lock()
+	srv := m.cbSrv
+	m.cbSrv = nil
+	m.mu.Unlock()
+	srv.Close() // the process "exits"
+	m2 := New(st, mustKey(t, dir), nil)
+	m2.SetEndpoints(m.ep)
+	if s := m2.Status(); s.Flow != "waiting" || !s.Listening {
+		t.Fatalf("after restart: %+v", s)
+	}
+	if code, body := f.browse(t, u4, nil); code != 200 || !strings.Contains(body, "linked") {
+		t.Fatalf("callback after restart: %d %s", code, body)
+	}
+	waitFlow(t, m2, "done")
+	m2.mu.Lock()
+	n := len(m2.attempts)
+	m2.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d attempts left after sign-in", n)
 	}
 }
