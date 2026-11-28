@@ -294,6 +294,13 @@ func (s *Store) ListNotifications(ctx context.Context, limit int) ([]Notificatio
 	return out, unread, rows.Err()
 }
 
+// ResolveNotifications marks the notifications about one object (such as an
+// approval that was decided or expired) as read.
+func (s *Store) ResolveNotifications(ctx context.Context, kind, ref string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read = 1 WHERE read = 0 AND kind = ? AND ref = ?`, kind, ref)
+	return err
+}
+
 func (s *Store) MarkNotificationsRead(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read = 1 WHERE read = 0`)
 	return err

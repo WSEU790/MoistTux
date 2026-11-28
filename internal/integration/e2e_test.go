@@ -187,6 +187,15 @@ func (f *fakeOllama) handler() http.Handler {
 			}
 			_ = enc.Encode(map[string]any{"model": "scripted-tools:latest", "message": map[string]any{"role": "assistant", "content": ""}, "done": true, "done_reason": "stop", "eval_count": 20, "eval_duration": 2e8})
 		}
+		if strings.Contains(content, "switched this conversation") {
+			// Resumed after a mode switch: act on the operator's earlier request.
+			for i := len(msgs) - 2; i >= 0; i-- {
+				if mm, _ := msgs[i].(map[string]any); mm["role"] == "user" {
+					content, _ = mm["content"].(string)
+					break
+				}
+			}
+		}
 		switch {
 		case role == "tool":
 			answer("**Investigated** with " + fmt.Sprint(last["tool_name"]) + ". FACT: result received (" + fmt.Sprint(len(content)) + " bytes).")
@@ -411,6 +420,68 @@ func TestEndToEnd(t *testing.T) {
 		_, exes := thread(id)
 		if len(exes) != 1 || exes[0]["status"] != "blocked" || exes[0]["decision"] != "deny" {
 			t.Fatalf("analyst mode did not block: %v", exes)
+		}
+	})
+
+	t.Run("SwitchModeAndContinue", func(t *testing.T) {
+		id := newConv("analyst")
+		c.do("POST", "/api/conversations/"+id+"/messages", map[string]any{"content": "please refresh package lists"}, nil)
+		eventually(t, 30*time.Second, "blocked answer", func() bool { return finalAnswer(id) != "" })
+		var conv map[string]any
+		eventually(t, 10*time.Second, "turn finished", func() bool { c.do("GET", "/api/conversations/"+id, nil, &conv); return conv["busy"] == false })
+		if st, body := c.do("PATCH", "/api/conversations/"+id, map[string]any{"mode": "administrator", "resume": true}, nil); st != 200 {
+			t.Fatalf("switch and continue: %d %s", st, body)
+		}
+		eventuallyOr(t, 60*time.Second, "action after the switch", func() bool {
+			_, exes := thread(id)
+			return len(exes) == 2 && exes[0]["status"] != "running" && exes[1]["status"] != "running"
+		}, func() string {
+			msgs, exes := thread(id)
+			return fmt.Sprintf("messages %v executions %v", msgs, exes)
+		})
+		_, exes := thread(id)
+		var after map[string]any
+		for _, e := range exes {
+			if e["mode"] == "administrator" {
+				after = e
+			}
+		}
+		if after == nil || after["tool"] != "refresh_package_lists" || after["status"] == "blocked" {
+			t.Fatalf("the change was not requested after switching modes: %v", exes)
+		}
+		// Decide a pending approval if the policy asked for one, then the action runs.
+		if after["status"] == "pending_approval" {
+			var aps []map[string]any
+			c.do("GET", "/api/approvals?limit=50", nil, &aps)
+			for _, a := range aps {
+				if a["execution_id"] == after["id"] {
+					c.do("POST", "/api/approvals/"+a["id"].(string)+"/decide", map[string]any{"approve": true}, nil)
+				}
+			}
+		}
+		eventually(t, 3*time.Minute, "action finished", func() bool {
+			_, exes := thread(id)
+			for _, e := range exes {
+				if e["id"] == after["id"] {
+					return e["status"] == "succeeded"
+				}
+			}
+			return false
+		})
+		var notes struct {
+			Items []map[string]any
+		}
+		c.do("GET", "/api/notifications?limit=50", nil, &notes)
+		for _, n := range notes.Items {
+			if n["kind"] == "approval" && n["read"] == false {
+				var aps []map[string]any
+				c.do("GET", "/api/approvals?limit=50", nil, &aps)
+				for _, a := range aps {
+					if a["id"] == n["ref"] && a["status"] != "pending" {
+						t.Errorf("notification for a decided approval is still unread: %v", n)
+					}
+				}
+			}
 		}
 	})
 

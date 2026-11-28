@@ -273,7 +273,13 @@ function NotificationBell() {
   }, [open]);
   const go = (n: Notification) => {
     setOpen(false);
-    if (n.kind === "approval") navigate("/approvals");
+    if (n.kind === "approval") {
+      // Open the conversation where the AI asked, so the request has its context.
+      api.get<any[]>("/api/approvals?limit=200").then((l) => {
+        const a = l.find((x) => x.id === n.ref);
+        navigate(a?.status === "pending" && a.execution?.conversation_id ? "/ai/" + a.execution.conversation_id : "/approvals");
+      }).catch(() => navigate("/approvals"));
+    }
     else if (n.kind === "ai_report") navigate("/incidents/" + n.ref);
     else if (n.server_id) navigate("/server/" + n.server_id);
   };

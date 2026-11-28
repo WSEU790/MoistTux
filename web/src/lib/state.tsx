@@ -216,6 +216,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         case "approval":
           reloadOverview();
           if (e.data?.status === "pending") toast({ title: "Approval required", body: e.data.summary, kind: "warn" });
+          else api.get<any>("/api/notifications?limit=1").then((n) => setUnread(n.unread)).catch(() => {}); // decided: its notification is resolved
           break;
         case "notification": {
           const n = e.data;

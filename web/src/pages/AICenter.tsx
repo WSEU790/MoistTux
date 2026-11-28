@@ -32,7 +32,9 @@ export function AICenter({ convId }: { convId?: string }) {
   const list = useFetch<Conversation[]>("/api/conversations?limit=200", []);
   const { on } = useApp();
   useEffect(() => on((e) => (e.type === "chat.conversation" || (e.type === "chat.message" && !list.data?.some((c) => c.id === e.data.conversation_id))) && list.reload()), [on, list.data]);
-  const create = async (mode: Mode = "analyst", server_id = "") => {
+  // Administrator by default: the AI can request changes, and every change
+  // still goes through the approval policy. Analyst stays one click away.
+  const create = async (mode: Mode = "administrator", server_id = "") => {
     const c = await api.post<Conversation>("/api/conversations", { mode, server_id });
     list.reload();
     navigate("/ai/" + c.id);
@@ -101,8 +103,8 @@ function Welcome({ onStart }: { onStart: (m?: Mode) => void }) {
 type Draft = { content: string; thinking: string };
 
 function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
-  const { servers, on, toast, serverById, live } = useApp();
-  const conv = useFetch<{ conversation: Conversation; messages: Message[]; executions: Execution[] }>(`/api/conversations/${id}`, [id]);
+  const { servers, on, toast, serverById, live, ai } = useApp();
+  const conv = useFetch<{ conversation: Conversation; messages: Message[]; executions: Execution[]; busy?: boolean }>(`/api/conversations/${id}`, [id]);
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [exes, setExes] = useState<Execution[]>([]);
   const [c, setC] = useState<Conversation | null>(null);
@@ -119,8 +121,8 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
       setMsgs(conv.data.messages);
       setExes(conv.data.executions);
       setC(conv.data.conversation);
-      const last = conv.data.messages[conv.data.messages.length - 1];
-      if (last?.role === "user" || last?.role === "tool") setState({ state: "thinking" });
+      // Trust the core about whether the AI is working (not the last message).
+      setState(conv.data.busy ? { state: "thinking" } : { state: "idle" });
     }
   }, [conv.data]);
 
@@ -161,12 +163,36 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
     const content = t.trim();
     if (!content) return;
     setErr(null);
+    // Mark busy before sending: a fast answer can finish (and report idle)
+    // before this request returns, and must not be overwritten afterwards.
+    setState({ state: "thinking" });
     try {
       await api.post(`/api/conversations/${id}/messages`, { content });
       setText("");
       stick.current = true;
-      setState({ state: "thinking" });
     } catch (e: any) {
+      setState({ state: "idle" });
+      setErr(e.message);
+    }
+  };
+  // Safety net: while "thinking", check with the core so a missed event can
+  // never leave the composer disabled.
+  useEffect(() => {
+    if (state.state !== "thinking") return;
+    const t = setInterval(() => {
+      api.get<{ busy?: boolean }>(`/api/conversations/${id}`).then((d) => { if (!d.busy) { setState({ state: "idle" }); conv.reload(); } }).catch(() => {});
+    }, 4000);
+    return () => clearInterval(t);
+  }, [state.state, id]);
+  const continueAs = async (mode: Mode) => {
+    setErr(null);
+    setState({ state: "thinking" });
+    try {
+      const n = await api.patch<Conversation>(`/api/conversations/${id}`, { mode, resume: true });
+      setC(n);
+      onChanged();
+    } catch (e: any) {
+      setState({ state: "idle" });
       setErr(e.message);
     }
   };
@@ -180,6 +206,12 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
     }
   };
   const busy = state.state === "thinking";
+  // The newest action the read-only mode blocked (offer to switch modes).
+  const roBlocked = useMemo(() => {
+    if (c?.mode !== "assistant" && c?.mode !== "analyst") return null;
+    const newest = [...exes].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
+    return newest && newest.status === "blocked" && /read-only/i.test(newest.decision_reason ?? "") ? newest : null;
+  }, [exes, c?.mode]);
   const exeById = useMemo(() => new Map(exes.map((e) => [e.id, e])), [exes]);
   const focused = c?.server_id ? serverById(c.server_id) : undefined;
   const mode = MODES.find((m) => m.id === c?.mode);
@@ -189,8 +221,8 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", minHeight: 0 }}>
       <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <header className="row" style={{ padding: "10px 18px", borderBottom: "1px solid var(--line)", gap: 12 }}>
-          <div className="grow" style={{ minWidth: 0 }}>
+        <header className="row" style={{ padding: "10px 18px", borderBottom: "1px solid var(--line)", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0, flex: "1 1 240px" }}>
             <div className="ellipsis" style={{ fontWeight: 600 }}>{c.title}</div>
             <div className="faint" style={{ fontSize: "var(--fs-xs)" }}>{c.model ? `Model ${c.model}` : "Model chosen on first message"} · {c.origin === "monitor" ? "started by the monitoring engine" : "operator conversation"}</div>
           </div>
@@ -243,6 +275,15 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
         </div>
         <div style={{ borderTop: "1px solid var(--line)", padding: "12px 18px", background: "var(--chrome)" }}>
           <div style={{ maxWidth: 880, margin: "0 auto" }}>
+            {roBlocked && !busy && (
+              <div style={{ marginBottom: 10 }}>
+                <Notice kind="warn">
+                  NEXUS did not run <span className="mono">{roBlocked.tool}</span> because this conversation is in {mode?.label} mode, which is read-only.{" "}
+                  <button className="btn primary sm" onClick={() => continueAs("administrator")}>Switch to Administrator and continue</button>{" "}
+                  <span className="faint">Changes still ask for your approval.</span>
+                </Notice>
+              </div>
+            )}
             <ErrorNote error={err} />
             <form className="row" style={{ alignItems: "flex-end" }} onSubmit={(e) => { e.preventDefault(); send(text); }}>
               <textarea
@@ -298,7 +339,7 @@ function Thread({ id, onChanged }: { id: string; onChanged: () => void }) {
         )}
         <div style={{ padding: 16, borderTop: "1px solid var(--line)" }} className="faint">
           <div className="label" style={{ marginBottom: 6 }}>Privacy</div>
-          <div style={{ fontSize: 12 }}>Prompts, logs and telemetry are sent only to your own AI engine (Ollama or Colibri). Credentials are never included in prompts.</div>
+          <div style={{ fontSize: 12 }}>{ai?.provider === "chatgpt" ? "With ChatGPT as the engine, prompts, logs and telemetry are sent to OpenAI." : `Prompts, logs and telemetry are sent only to your own AI engine (${ai?.engine ?? "Ollama or Colibri"}).`} Credentials are never included in prompts.</div>
         </div>
       </aside>
       {openExe && <ExecDrawer e={openExe} onClose={() => setOpenExe(null)} />}
@@ -317,6 +358,7 @@ function MiniStat({ label, v }: { label: string; v: string }) {
 
 function MessageView({ m, exe, onOpenExe }: { m: Message; exe?: Execution; onOpenExe: (e: Execution) => void }) {
   if (m.role === "user") {
+    if (m.meta?.kind === "resume") return <div className="row faint" style={{ fontSize: 11, gap: 10 }}><span className="grow" style={{ height: 1, background: "var(--line)" }} />You switched to a mode that can request changes; NEXUS continues<span className="grow" style={{ height: 1, background: "var(--line)" }} /></div>;
     const fromMonitor = m.meta?.origin === "monitor";
     return (
       <div style={{ alignSelf: fromMonitor ? "stretch" : "flex-end", maxWidth: fromMonitor ? "100%" : "78%", background: fromMonitor ? "var(--warn-soft)" : "var(--accent-soft)", border: "1px solid var(--line)", borderRadius: "12px 12px 3px 12px", padding: "10px 14px", whiteSpace: "pre-wrap" }}>

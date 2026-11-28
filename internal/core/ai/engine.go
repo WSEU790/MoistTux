@@ -387,6 +387,32 @@ func (e *Engine) busy(id string) bool {
 	return ok
 }
 
+// Busy reports whether the AI is working on a conversation right now.
+func (e *Engine) Busy(id string) bool { return e.busy(id) }
+
+// Resume lets the AI continue a conversation after the operator changed
+// something it depends on (such as switching to Administrator mode). The
+// note is recorded as an operator message so the model sees why it resumes.
+func (e *Engine) Resume(ctx context.Context, convID, note string) error {
+	conv, err := e.deps.Store.GetConversation(ctx, convID)
+	if err != nil {
+		return err
+	}
+	if e.busy(convID) {
+		return ErrBusy
+	}
+	if pending, _ := e.pendingApproval(ctx, convID); pending != nil {
+		return fmt.Errorf("an approval is pending in this conversation (%s); approve or deny it first", pending.Summary)
+	}
+	m := &store.Message{ConversationID: convID, Role: "user", Content: note, Meta: toJSON(map[string]string{"kind": "resume"})}
+	if err := e.deps.Store.AddMessage(ctx, m); err != nil {
+		return err
+	}
+	e.deps.Bus.Publish("chat.message", m)
+	e.startTurn(conv, "general")
+	return nil
+}
+
 func (e *Engine) state(convID, state string, extra map[string]any) {
 	d := map[string]any{"conversation_id": convID, "state": state}
 	for k, v := range extra {
@@ -928,6 +954,7 @@ func (e *Engine) Decide(ctx context.Context, approvalID string, approve bool, by
 		return nil, err
 	}
 	_ = e.deps.Store.Audit(ctx, by, "approval."+status, ap.Tool, map[string]any{"approval": ap.ID, "execution": ap.ExecutionID, "server": ap.ServerID, "reason": reason})
+	_ = e.deps.Store.ResolveNotifications(ctx, "approval", ap.ID) // no longer needs attention
 	e.deps.Bus.Publish("approval", ap)
 	exe := ap.Execution
 	if exe == nil {
@@ -992,6 +1019,7 @@ func (e *Engine) ExpireApprovals(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		_ = e.deps.Store.ResolveNotifications(ctx, "approval", ap.ID)
 		e.deps.Bus.Publish("approval", ap)
 		if ap.Execution != nil && ap.Execution.ConversationID != "" {
 			e.toolMessage(ctx, ap.Execution.ConversationID, ap.Tool, ap.ExecutionID, map[string]any{"status": "expired", "reason": "the approval request expired without a decision; nothing was executed"})

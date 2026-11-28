@@ -293,7 +293,7 @@ function AIPanel() {
   const general = ai?.roles?.find((r) => r.role === "general");
   const ask = async (text: string) => {
     if (!text.trim()) return;
-    const r = await fetch("/api/conversations", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "analyst" }) });
+    const r = await fetch("/api/conversations", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "administrator" }) });
     const c = await r.json();
     await fetch(`/api/conversations/${c.id}/messages`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: text }) });
     navigate("/ai/" + c.id);

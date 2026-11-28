@@ -1153,7 +1153,7 @@ func (s *Server) getConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exes, _ := s.Store.ListExecutions(r.Context(), "", c.ID, 500)
-	writeJSON(w, 200, map[string]any{"conversation": c, "messages": msgs, "executions": exes})
+	writeJSON(w, 200, map[string]any{"conversation": c, "messages": msgs, "executions": exes, "busy": s.AI.Busy(c.ID)})
 }
 
 func (s *Server) patchConversation(w http.ResponseWriter, r *http.Request) {
@@ -1167,6 +1167,9 @@ func (s *Server) patchConversation(w http.ResponseWriter, r *http.Request) {
 		ServerID *string `json:"server_id"`
 		Mode     *string `json:"mode"`
 		Archived *bool   `json:"archived"`
+		// Resume asks the AI to continue after the change (for example to
+		// retry an action a read-only mode blocked).
+		Resume bool `json:"resume"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, 400, err)
@@ -1205,6 +1208,13 @@ func (s *Server) patchConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Bus.Publish("chat.conversation", c)
+	if req.Resume && req.Mode != nil {
+		note := "I switched this conversation to " + c.Mode + " mode. Continue with what I asked for; changes still go through the approval policy."
+		if err := s.AI.Resume(r.Context(), c.ID, note); err != nil {
+			writeErr(w, 409, err)
+			return
+		}
+	}
 	writeJSON(w, 200, c)
 }
 
